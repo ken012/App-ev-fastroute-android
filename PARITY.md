@@ -53,7 +53,8 @@ platform-native but must match feature-for-feature.
 | Multi-stop planning glue (corridor/progress/beam over full trip) | `:app` TripPlanner.planThrough | ✅ |
 | Multi-stop UI (add/edit/reorder/remove stops + map pins) | Compose WaypointRow + RouteMap | ✅ v1 |
 | Arrival timeline (per-stop clock time + battery, depart→arrive) | Compose ArrivalTimeline | ✅ v1 |
-| Live traffic overlay | (limited on free stack) | ⬜ |
+| Scheduled departure (shifts arrival-timeline clock) + free-flow ETA disclosure | Compose ArrivalTimeline | ✅ v1 |
+| Live traffic overlay / traffic-aware ETAs | — | ⛔ not feasible on the free stack (no free MapKit-equivalent traffic source; documented, not faked) |
 | Sequential-handoff session state machine (progress + arrival prompt) | `NavigationSession` (:core) | `NavigationSessionTest` | ✅ |
 | Sequential nav handoff (persistent session, per-stop advance) | Compose GuidedTripBanner + `SettingsStore` | ✅ v1 (manual confirm; GPS auto-prompt is the remaining sliver) |
 | Region + units model (currency/connectors/imperial/detect) | `Region.kt` + `Units` (:core) | `RegionTest` ✅ |

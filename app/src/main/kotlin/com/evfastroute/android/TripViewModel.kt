@@ -80,6 +80,13 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     var currentSocPercent by mutableStateOf(80f)
     var arrivalBufferPercent by mutableStateOf(10f)
 
+    /** Minutes from now the trip is planned to start; shifts the arrival-timeline clock. 0 = leave now.
+     * (The free routing stack has no live-traffic model, so this moves the schedule, not the ETA.) */
+    var departureOffsetMinutes by mutableStateOf(0)
+        private set
+
+    fun setDepartureOffset(minutes: Int) { departureOffsetMinutes = minutes }
+
     var options by mutableStateOf<List<RouteOption>>(emptyList())
         private set
     var selectedIndex by mutableStateOf(0)

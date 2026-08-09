@@ -180,6 +180,8 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                 ArrivalTimeline(
                     option = selected,
                     destinationName = vm.destination?.placeName ?: "Destination",
+                    departureOffsetMinutes = vm.departureOffsetMinutes,
+                    onDepartureOffsetChange = vm::setDepartureOffset,
                 )
             }
         }
@@ -195,17 +197,40 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
     }
 }
 
+private val departureChoices = listOf(0 to "Now", 30 to "+30m", 60 to "+1h", 120 to "+2h")
+
 @Composable
-private fun ArrivalTimeline(option: RouteOption, destinationName: String) {
-    // Absolute clock times are anchored to "now" as the departure moment (stable per option).
-    val departureMillis = remember(option) { System.currentTimeMillis() }
+private fun ArrivalTimeline(
+    option: RouteOption,
+    destinationName: String,
+    departureOffsetMinutes: Int,
+    onDepartureOffsetChange: (Int) -> Unit,
+) {
+    // "Now" is captured once per option; the chosen departure offset shifts the whole clock.
+    val nowMillis = remember(option) { System.currentTimeMillis() }
+    val departureMillis = nowMillis + departureOffsetMinutes * 60_000L
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Trip timeline", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            TimelineRow(marker = "◉", title = "Depart", time = clockLabel(departureMillis, 0), trailing = "now")
+
+            Text("Depart", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                departureChoices.forEach { (minutes, label) ->
+                    ToggleButton(label, selected = departureOffsetMinutes == minutes, modifier = Modifier.weight(1f)) {
+                        onDepartureOffsetChange(minutes)
+                    }
+                }
+            }
+
+            TimelineRow(
+                marker = "◉",
+                title = "Depart",
+                time = clockLabel(departureMillis, 0),
+                trailing = if (departureOffsetMinutes == 0) "now" else "scheduled",
+            )
             option.itinerary.forEach { stop ->
                 val isCharge = stop.kind == ItineraryStop.Kind.CHARGING
                 TimelineRow(
@@ -220,6 +245,11 @@ private fun ArrivalTimeline(option: RouteOption, destinationName: String) {
                 title = destinationName,
                 time = clockLabel(departureMillis, option.totalEtaMinutes),
                 trailing = "Arrive · ${option.arrivalBatteryPercent}%",
+            )
+            Text(
+                "Free-flow estimates — live traffic isn't included on the free routing stack.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
