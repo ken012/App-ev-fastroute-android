@@ -28,7 +28,7 @@ platform-native but must match feature-for-feature.
 | Beam-search sequence selection (objective-aware) | `ChargerSequenceSelector.kt` | `ChargerSequenceSelectorTest` | ✅ done |
 | Build route from sequence+leg data (SOC walk → RouteOption) | `RoutePlanner.buildRoute` | `RoutePlannerTest` | ✅ done |
 | Optimize: best-per-objective + dedup-merge + comparator | `RoutePlanner.optimize` | `RoutePlannerTest` | ✅ done |
-| Route fetch/leg orchestration (network I/O) | `:app` service clients | — | ⬜ next |
+| Live planning glue (direct→project→beam-search→build→optimize) | `:app` TripPlanner | (net-bound) | ✅ |
 | `RangeEstimator.swift` | `RangeEstimator.kt` | `RangeEstimatorTest` | ✅ done |
 | `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | `PlaceRankerTest` | ✅ done |
 
