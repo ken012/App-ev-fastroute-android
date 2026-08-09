@@ -15,6 +15,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "EVFastRoute"
 
-// Pure-Kotlin logic shared conceptually with the iOS app (ported, test-for-test).
-// The Android `:app` module (Compose + MapLibre) is added next.
+// :core = pure-Kotlin logic ported test-for-test from iOS. :app = Android UI (Compose + MapLibre)
+// that consumes :core.
 include(":core")
+include(":app")
