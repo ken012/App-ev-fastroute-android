@@ -42,8 +42,8 @@ platform-native but must match feature-for-feature.
 | Photon geocoding parsing → PlaceCandidate | `Photon.kt` (:core) | `PhotonTest` ✅ |
 | Photon HTTP fetch | `:app` net/PhotonClient | ✅ |
 | Map + charger pins + route line | MapLibre Compose | ⬜ |
-| Planner (start/dest/stops/battery/departure) | Compose | ⬜ |
-| Route options (fastest/fewest-stops/reliable/cost) | Compose | ⬜ |
+| Planner (start/dest search + battery/buffer + Find Route) | Compose PlannerApp | ✅ v1 |
+| Route options list (title/ETA/stops/cost/itinerary) | Compose RouteCard | ✅ v1 |
 | Arrival timeline | Compose | ⬜ |
 | Live traffic overlay | (limited on free stack) | ⬜ |
 | Sequential nav handoff (Google/Waze/geo) | Android intents | ⬜ |
