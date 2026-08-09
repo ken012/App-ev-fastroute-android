@@ -18,24 +18,42 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.evfastroute.android.map.RouteMap
+import com.evfastroute.core.EvCatalog
+import com.evfastroute.core.EvPreset
 import com.evfastroute.core.LatLon
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.RouteOption
 
 @Composable
 fun PlannerApp(vm: TripViewModel = viewModel()) {
+    if (vm.isPickingVehicle) {
+        VehiclePicker(
+            current = vm.selectedPreset,
+            onSelect = vm::selectPreset,
+            onClose = vm::hideVehiclePicker,
+        )
+        return
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Text("EV FastRoute", style = MaterialTheme.typography.headlineMedium) }
+
+        item { VehicleCard(preset = vm.selectedPreset, onClick = vm::showVehiclePicker) }
 
         item {
             AddressField(
@@ -188,6 +206,95 @@ private fun RouteCard(option: RouteOption, selected: Boolean, onClick: () -> Uni
         }
     }
 }
+
+@Composable
+private fun VehicleCard(preset: EvPreset, onClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Vehicle", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text("Change", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            Text(preset.displayName, style = MaterialTheme.typography.titleMedium)
+            Text(presetSpecLine(preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun VehiclePicker(current: EvPreset, onSelect: (EvPreset) -> Unit, onClose: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val results = remember(query) { EvCatalog.search(query) }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Choose your car", style = MaterialTheme.typography.headlineSmall)
+            TextButton(onClick = onClose) { Text("Close") }
+        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = { Text("Search ${EvCatalog.makeCount} makes") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (results.isEmpty()) {
+                item {
+                    Text(
+                        "No matching vehicles. Try a make or model.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
+            }
+            itemsIndexed(results) { _, preset ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { onSelect(preset) },
+                    colors = if (preset.catalogIdentifier == current.catalogIdentifier) {
+                        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    } else {
+                        CardDefaults.cardColors()
+                    },
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(preset.displayName, style = MaterialTheme.typography.titleSmall)
+                        Text(presetSpecLine(preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun presetSpecLine(preset: EvPreset): String {
+    val battery = "${trimDecimal(preset.batteryCapacityKwh)} kWh"
+    val power = "${preset.maxDcChargingKw} kW DC"
+    val connectors = preset.connectorTypes.joinToString("/") { it.name }
+    val range = preset.ratedRangeKm?.let { " · ~${it.toInt()} km" } ?: ""
+    return "$battery · $power · $connectors$range"
+}
+
+private fun trimDecimal(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
 
 private fun formatMinutes(minutes: Int): String {
     if (minutes < 60) return "${minutes}m"

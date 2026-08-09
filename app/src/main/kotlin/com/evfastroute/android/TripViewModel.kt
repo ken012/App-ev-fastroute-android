@@ -6,25 +6,27 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.evfastroute.android.net.PhotonClient
-import com.evfastroute.core.ConnectorType
+import com.evfastroute.core.EvCatalog
+import com.evfastroute.core.EvPreset
 import com.evfastroute.core.LatLon
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.PlaceRanker
 import com.evfastroute.core.RouteOption
-import com.evfastroute.core.Vehicle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class TripViewModel : ViewModel() {
 
-    // A sensible default vehicle until a garage/catalog screen exists (parity item for later).
-    private val vehicle = Vehicle(
-        batteryCapacityKwh = 75.0,
-        efficiencyKwhPerKm = 0.17,
-        maxDcChargingKw = 250,
-        connectorTypes = listOf(ConnectorType.CCS, ConnectorType.CCS2, ConnectorType.NACS),
-    )
     private val planner = TripPlanner()
+
+    // The chosen car. Starts at a sensible default; the user can pick any catalog vehicle. The
+    // planner only needs the physics ([EvPreset.toVehicle]); the preset keeps make/model for display.
+    var selectedPreset by mutableStateOf(EvCatalog.default)
+        private set
+    private val vehicle get() = selectedPreset.toVehicle()
+
+    var isPickingVehicle by mutableStateOf(false)
+        private set
 
     var startText by mutableStateOf("")
         private set
@@ -91,6 +93,17 @@ class TripViewModel : ViewModel() {
 
     fun selectOption(index: Int) {
         if (index in options.indices) selectedIndex = index
+    }
+
+    fun showVehiclePicker() { isPickingVehicle = true }
+    fun hideVehiclePicker() { isPickingVehicle = false }
+
+    fun selectPreset(preset: EvPreset) {
+        selectedPreset = preset
+        isPickingVehicle = false
+        // A different car changes the whole plan; clear stale options so nothing misleads.
+        options = emptyList()
+        selectedIndex = 0
     }
 
     fun plan() {

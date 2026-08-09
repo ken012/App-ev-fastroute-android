@@ -31,6 +31,7 @@ platform-native but must match feature-for-feature.
 | Live planning glue (direct→project→beam-search→build→optimize) | `:app` TripPlanner | (net-bound) | ✅ |
 | `RangeEstimator.swift` | `RangeEstimator.kt` | `RangeEstimatorTest` | ✅ done |
 | `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | `PlaceRankerTest` | ✅ done |
+| `EVCatalog.swift` (presets/search/region connectors/makeVehicle) | `EvCatalog.kt` | `EvCatalogTest` | ✅ done (built-in set; 700-car JSON later) |
 
 ## App/services (Android `:app`, added after core CI is green)
 | Feature (iOS) | Android | Status |
@@ -44,6 +45,7 @@ platform-native but must match feature-for-feature.
 | Map + charger pins + route line | MapLibre RouteMap (OpenFreeMap) | ✅ v1 |
 | Planner (start/dest search + battery/buffer + Find Route) | Compose PlannerApp | ✅ v1 |
 | Route options list (title/ETA/stops/cost/itinerary) | Compose RouteCard | ✅ v1 |
+| Vehicle picker + catalog (search, pick, region connectors) | Compose VehiclePicker + `EvCatalog` | ✅ v1 |
 | Arrival timeline | Compose | ⬜ |
 | Live traffic overlay | (limited on free stack) | ⬜ |
 | Sequential nav handoff (Google/Waze/geo) | Android intents | ⬜ |
