@@ -6,6 +6,9 @@ package com.evfastroute.core
 
 data class ChargingStop(
     val chargerId: String,
+    val name: String,
+    val latitude: Double,
+    val longitude: Double,
     val arrivalBatteryPercent: Int,
     val targetBatteryPercent: Int,
     val chargeDurationMinutes: Int,
@@ -35,6 +38,8 @@ data class RouteOption(
     val riskScore: Double,
     val chargingStops: List<ChargingStop>,
     val itinerary: List<ItineraryStop>,
+    /** The driven road path (start → chargers → destination) for the map polyline. */
+    val geometry: List<LatLon> = emptyList(),
     val estimatedChargingCostValue: Double? = null,
     val estimatedCostText: String? = null,
 )

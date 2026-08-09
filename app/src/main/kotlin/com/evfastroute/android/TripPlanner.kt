@@ -42,7 +42,7 @@ class TripPlanner {
             arrivalBufferPercent = arrivalBufferPercent,
         )
         if (!energy.needsCharge) {
-            return Result.Success(listOf(directOption(directMinutes, energy.arrivalIfNoChargePct)))
+            return Result.Success(listOf(directOption(directMinutes, energy.arrivalIfNoChargePct, direct.geometry)))
         }
 
         val box = boundingBox(direct.geometry) ?: return Result.Error("No route geometry was returned.")
@@ -121,6 +121,7 @@ class TripPlanner {
             vehicle = vehicle,
             currentSOC = currentSOC,
             arrivalBufferPercent = arrivalBufferPercent,
+            legGeometries = legs.map { it.geometry },
         )
     }
 
@@ -131,7 +132,7 @@ class TripPlanner {
         else -> { _ -> 0.0 }
     }
 
-    private fun directOption(directMinutes: Int, arrivalPct: Int): RouteOption = RouteOption(
+    private fun directOption(directMinutes: Int, arrivalPct: Int, geometry: List<LatLon>): RouteOption = RouteOption(
         id = "direct",
         objective = RouteObjective.DIRECT,
         supportedObjectives = setOf(RouteObjective.DIRECT),
@@ -145,6 +146,7 @@ class TripPlanner {
         riskScore = 1.0,
         chargingStops = emptyList(),
         itinerary = emptyList(),
+        geometry = geometry,
     )
 
     private data class Box(val minLat: Double, val minLon: Double, val maxLat: Double, val maxLon: Double)

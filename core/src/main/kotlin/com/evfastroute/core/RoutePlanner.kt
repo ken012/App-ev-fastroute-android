@@ -25,6 +25,7 @@ object RoutePlanner {
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
+        legGeometries: List<List<LatLon>> = emptyList(),
     ): RouteOption? {
         if (legDistancesKm.size != sequence.size + 1 || legDurationMinutes.size != sequence.size + 1) return null
         val capacity = maxOf(1.0, vehicle.batteryCapacityKwh)
@@ -62,7 +63,14 @@ object RoutePlanner {
             chargingMinutes += minutes
             totalCost += ChargePlanner.energyAdded(arrivalInt, targetInt, capacity) * charger.pricePerKwh
             reliabilitySum += charger.reliabilityScore
-            stops.add(ChargingStop(charger.id, arrivalInt, targetInt, minutes))
+            stops.add(
+                ChargingStop(
+                    chargerId = charger.id, name = charger.name,
+                    latitude = charger.latitude, longitude = charger.longitude,
+                    arrivalBatteryPercent = arrivalInt, targetBatteryPercent = targetInt,
+                    chargeDurationMinutes = minutes,
+                ),
+            )
             soc = targetInt.toDouble()
         }
 
@@ -86,6 +94,7 @@ object RoutePlanner {
             riskScore = maxOf(1.0, (100 - averageReliability).roundToInt().toDouble()),
             chargingStops = stops,
             itinerary = itinerary,
+            geometry = legGeometries.flatten(),
             estimatedChargingCostValue = if (sequence.isNotEmpty()) totalCost else null,
         )
     }
