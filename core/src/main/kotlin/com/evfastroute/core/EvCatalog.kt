@@ -1,6 +1,8 @@
 package com.evfastroute.core
 
 import java.text.Normalizer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 // Selectable EV specifications. Faithful port of the iOS EVPreset / EVCatalog built-in set: the
 // fallback presets plus the Kia manufacturer supplements. (iOS also bundles a 700-car OpenEV JSON
@@ -66,16 +68,25 @@ data class EvPreset(
 
 object EvCatalog {
 
-    /** All built-in presets, de-duplicated by identifier and sorted make → model → newest year.
-     * `lazy` so the preset lists (declared below) are initialized before this reads them. */
-    val presets: List<EvPreset> by lazy { deduplicatedAndSorted(fallbackPresets + manufacturerSupplements) }
+    /** Built-in starter set (fallback presets + manufacturer supplements), always available even if
+     * the bundled 789-car catalog can't be read. `lazy` so the lists below initialize first. */
+    private val builtIn: List<EvPreset> by lazy { deduplicatedAndSorted(fallbackPresets + manufacturerSupplements) }
+
+    /** The bundled OpenEV catalog once loaded at startup; null until then (or if loading failed). */
+    @Volatile private var loaded: List<EvPreset>? = null
+
+    private val catalogJson = Json { ignoreUnknownKeys = true }
+
+    /** Active catalog: the full bundled set when loaded, else the built-in starter set. */
+    val presets: List<EvPreset> get() = loaded ?: builtIn
 
     /** Distinct manufacturer count — used by the picker header ("N makes"). */
     val makeCount: Int get() = presets.map { it.make }.toSet().size
 
     /** Sensible starting car when the user hasn't chosen one yet. */
     val default: EvPreset get() = presets.firstOrNull { it.make == "Tesla" && it.model.startsWith("Model 3") }
-        ?: presets.first()
+        ?: presets.firstOrNull { it.make == "Tesla" }
+        ?: fallbackPresets.first()
 
     /**
      * Token-AND search over "year make model", diacritic/case/punctuation-insensitive, also matching
@@ -93,6 +104,32 @@ object EvCatalog {
 
     fun preset(withIdentifier: String?): EvPreset? =
         withIdentifier?.let { id -> presets.firstOrNull { it.catalogIdentifier == id } }
+
+    /**
+     * Parses a bundled OpenEV catalog document and, when it looks complete, promotes it to the
+     * active catalog (merged with the manufacturer supplements). No-ops on a malformed or
+     * suspiciously small document so the built-in starter set stays. Returns true if accepted.
+     * Called once at app startup (`:app` reads the `ev_catalog.json` asset).
+     */
+    fun loadBundledCatalog(json: String, minimumVehicles: Int = 700): Boolean {
+        val parsed = parseDocument(json) ?: return false
+        if (parsed.size < minimumVehicles) return false
+        loaded = deduplicatedAndSorted(parsed + manufacturerSupplements)
+        return true
+    }
+
+    /** Decodes the document and maps its vehicles to presets. Null on decode failure or a schema
+     * version this build doesn't understand. No size gate — [loadBundledCatalog] applies that. */
+    fun parseDocument(json: String): List<EvPreset>? {
+        val document = runCatching {
+            catalogJson.decodeFromString(EvCatalogDocument.serializer(), json)
+        }.getOrNull() ?: return null
+        if (document.schemaVersion != 1) return null
+        return document.vehicles.map { it.toPreset() }
+    }
+
+    /** Test hook: drop any loaded catalog and fall back to the built-in set. */
+    internal fun resetForTest() { loaded = null }
 
     private fun normalize(text: String): String {
         val folded = Normalizer.normalize(text, Normalizer.Form.NFKD)
@@ -180,5 +217,53 @@ object EvCatalog {
         EvPreset(make = "Polestar", model = "2", year = 2025, batteryCapacityKwh = 82.0, maxDcChargingKw = 205, efficiencyKwhPerKm = 0.18, connectorTypes = listOf(ConnectorType.CCS2)),
         EvPreset(make = "Nissan", model = "Ariya", year = 2025, batteryCapacityKwh = 87.0, maxDcChargingKw = 130, efficiencyKwhPerKm = 0.19, connectorTypes = listOf(ConnectorType.CCS)),
         EvPreset(make = "Audi", model = "Q4 e-tron", year = 2025, batteryCapacityKwh = 82.0, maxDcChargingKw = 175, efficiencyKwhPerKm = 0.20, connectorTypes = listOf(ConnectorType.CCS2)),
+    )
+}
+
+/** Maps the OpenEV catalog's connector tokens (CCS1/CCS2/NACS Tesla/CHAdeMO) to [ConnectorType]. */
+private fun catalogConnector(raw: String): ConnectorType = when (raw.uppercase()) {
+    "CCS", "CCS1" -> ConnectorType.CCS
+    "CCS2" -> ConnectorType.CCS2
+    "CHADEMO" -> ConnectorType.CHADEMO
+    "NACS", "TESLA", "NACS/TESLA" -> ConnectorType.NACS
+    "TYPE2", "TYPE 2" -> ConnectorType.TYPE2
+    "J1772" -> ConnectorType.J1772
+    else -> ConnectorType.OTHER
+}
+
+@Serializable
+private data class EvCatalogDocument(
+    val schemaVersion: Int = 0,
+    val vehicles: List<CatalogVehicle> = emptyList(),
+)
+
+@Serializable
+private data class CatalogVehicle(
+    val catalogIdentifier: String? = null,
+    val make: String,
+    val model: String,
+    val year: Int,
+    val batteryCapacityKwh: Double,
+    val maxDcChargingKw: Int,
+    val efficiencyKwhPerKm: Double,
+    val connectorTypes: List<String> = emptyList(),
+    val ratedRangeKm: Double? = null,
+    val rangeStandard: String? = null,
+    val sourceName: String? = null,
+    val sourceURL: String? = null,
+) {
+    fun toPreset(): EvPreset = EvPreset(
+        make = make,
+        model = model,
+        year = year,
+        batteryCapacityKwh = batteryCapacityKwh,
+        maxDcChargingKw = maxDcChargingKw,
+        efficiencyKwhPerKm = efficiencyKwhPerKm,
+        connectorTypes = connectorTypes.map { catalogConnector(it) }.ifEmpty { listOf(ConnectorType.OTHER) },
+        catalogIdentifier = catalogIdentifier ?: EvPreset.defaultIdentifier(make, model, year),
+        ratedRangeKm = ratedRangeKm,
+        rangeStandard = rangeStandard,
+        sourceName = sourceName,
+        sourceUrl = sourceURL,
     )
 }

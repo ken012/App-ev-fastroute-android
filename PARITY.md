@@ -31,7 +31,8 @@ platform-native but must match feature-for-feature.
 | Live planning glue (direct→project→beam-search→build→optimize) | `:app` TripPlanner | (net-bound) | ✅ |
 | `RangeEstimator.swift` | `RangeEstimator.kt` | `RangeEstimatorTest` | ✅ done |
 | `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | `PlaceRankerTest` | ✅ done |
-| `EVCatalog.swift` (presets/search/region connectors/makeVehicle) | `EvCatalog.kt` | `EvCatalogTest` | ✅ done (built-in set; 700-car JSON later) |
+| `EVCatalog.swift` (presets/search/region connectors/makeVehicle) | `EvCatalog.kt` | `EvCatalogTest` | ✅ done |
+| Bundled 789-car OpenEV catalog (parse/promote + built-in fallback) | `EvCatalog.loadBundledCatalog` + `assets/ev_catalog.json` + `EvApp` | `CatalogDocumentTest` | ✅ done |
 
 ## App/services (Android `:app`, added after core CI is green)
 | Feature (iOS) | Android | Status |
