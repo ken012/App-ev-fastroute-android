@@ -27,7 +27,7 @@ platform-native but must match feature-for-feature.
 | Charger scoring (speedScore/networkMatches/sequenceKey) | `ChargerScoring.kt` | `ChargerScoringTest` | ✅ done |
 | Beam-search sequence selection (objective-aware) | `ChargerSequenceSelector.kt` | `ChargerSequenceSelectorTest` | ✅ done |
 | Build/optimize pipeline (verify legs, dedup-merge, comparator) | `:app` (needs routing I/O) | — | ⬜ next |
-| `RangeEstimator.swift` | `RangeEstimator.kt` | — | ⬜ |
+| `RangeEstimator.swift` | `RangeEstimator.kt` | `RangeEstimatorTest` | ✅ done |
 | `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | — | ⬜ |
 
 ## App/services (Android `:app`, added after core CI is green)

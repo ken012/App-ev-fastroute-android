@@ -48,6 +48,7 @@ data class Vehicle(
     val efficiencyKwhPerKm: Double,
     val maxDcChargingKw: Int,
     val connectorTypes: List<ConnectorType>,
+    val batteryHealthPercent: Double? = null,
 )
 
 /** A charger placed on the route: distance travelled along it and how far off-corridor. */
