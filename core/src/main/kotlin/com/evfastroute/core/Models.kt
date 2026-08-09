@@ -4,7 +4,7 @@ package com.evfastroute.core
 // Charger / Vehicle / ConnectorType surface (only the fields the routing/charging intelligence
 // uses). Richer UI-facing fields (make/model/catalog, live status text, …) live in the :app layer.
 
-enum class ConnectorType { CCS, CHADEMO, TYPE2, TESLA, NACS, J1772, OTHER }
+enum class ConnectorType { CCS, CCS2, CHADEMO, NACS, TYPE2, J1772, OTHER }
 
 enum class ChargerStatus { AVAILABLE, BUSY, LIMITED, OFFLINE }
 

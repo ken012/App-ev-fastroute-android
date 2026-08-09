@@ -35,7 +35,8 @@ platform-native but must match feature-for-feature.
 ## App/services (Android `:app`, added after core CI is green)
 | Feature (iOS) | Android | Status |
 |---|---|---|
-| OCM charger fetch | `OpenChargeMapClient.kt` | ⬜ |
+| OCM response parsing → Charger (+ connector/reliability) | `OpenChargeMap.kt` (:core) | `OpenChargeMapTest` ✅ |
+| OCM HTTP fetch | `:app` OpenChargeMapClient | ⬜ |
 | Driving route legs | `OpenRouteServiceClient.kt` | ⬜ |
 | Address autocomplete/resolve | `PhotonClient.kt` | ⬜ |
 | Map + charger pins + route line | MapLibre Compose | ⬜ |
