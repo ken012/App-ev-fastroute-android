@@ -33,7 +33,8 @@ class TripPlanner {
         currentSOC: Double,
         arrivalBufferPercent: Double,
     ): Result {
-        val direct = OrsClient.route(start.latitude, start.longitude, destination.latitude, destination.longitude)
+        val legCache = HashMap<String, RouteLeg?>()
+        val direct = cachedRoute(legCache, start.latitude, start.longitude, destination.latitude, destination.longitude)
             ?: return Result.Error("Couldn't calculate a driving route. Check the addresses and your connection.")
         val totalDistanceKm = direct.distanceKm
         val directMinutes = direct.durationMinutes
@@ -83,7 +84,7 @@ class TripPlanner {
                 val key = ChargerScoring.sequenceKey(sequence.map { it.id })
                 if (!seen.add(key)) continue
                 val built = buildFromSequence(
-                    key, sequence, start, destination, directMinutes, vehicle, currentSOC, arrivalBufferPercent,
+                    key, sequence, start, destination, directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache,
                 )
                 if (built != null) candidates.add(built)
             }
@@ -106,11 +107,13 @@ class TripPlanner {
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
+        legCache: MutableMap<String, RouteLeg?>,
     ): RouteOption? {
         val points = listOf(start) + sequence.map { LatLon(it.latitude, it.longitude) } + listOf(destination)
         val legs = mutableListOf<RouteLeg>()
         for (index in 0 until points.size - 1) {
-            val leg = OrsClient.route(
+            val leg = cachedRoute(
+                legCache,
                 points[index].latitude, points[index].longitude,
                 points[index + 1].latitude, points[index + 1].longitude,
             ) ?: return null
@@ -128,6 +131,22 @@ class TripPlanner {
             legGeometries = legs.map { it.geometry },
         )
     }
+
+    // Candidate charger sequences share many legs (e.g. start→first-charger). Caching per plan()
+    // call collapses those duplicates into one OpenRouteService request, which both speeds planning
+    // and keeps a single multi-stop plan under the free ORS rate limit (40/min) — without the cache,
+    // throttling nulls legs and the user sees a spurious "no plan" failure. Scoped to one plan call.
+    private suspend fun cachedRoute(
+        cache: MutableMap<String, RouteLeg?>,
+        fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
+    ): RouteLeg? {
+        val key = "${round5(fromLat)},${round5(fromLon)}>${round5(toLat)},${round5(toLon)}"
+        cache[key]?.let { return it }
+        if (cache.containsKey(key)) return null // negative result cached — don't refetch this leg
+        return OrsClient.route(fromLat, fromLon, toLat, toLon).also { cache[key] = it }
+    }
+
+    private fun round5(value: Double): Long = Math.round(value * 100_000.0)
 
     private fun preference(objective: RouteObjective, vehicle: Vehicle): (Charger) -> Double = when (objective) {
         RouteObjective.FASTEST -> { charger -> ChargerScoring.speedScore(charger, vehicle, emptySet()) }
@@ -169,10 +188,11 @@ class TripPlanner {
     ): Result {
         if (waypoints.isEmpty()) return plan(start, destination, vehicle, currentSOC, arrivalBufferPercent)
 
+        val legCache = HashMap<String, RouteLeg?>()
         val points = listOf(start) + waypoints.map { LatLon(it.latitude, it.longitude) } + listOf(destination)
         val legRoutes = mutableListOf<RouteLeg>()
         for (i in 0 until points.size - 1) {
-            val leg = OrsClient.route(points[i].latitude, points[i].longitude, points[i + 1].latitude, points[i + 1].longitude)
+            val leg = cachedRoute(legCache, points[i].latitude, points[i].longitude, points[i + 1].latitude, points[i + 1].longitude)
                 ?: return Result.Error("Couldn't calculate a driving route through your stops. Check the addresses and your connection.")
             legRoutes.add(leg)
         }
@@ -236,7 +256,7 @@ class TripPlanner {
                 if (!seen.add(key)) continue
                 val built = buildThroughSequence(
                     key, sequence, start, destination, waypoints, waypointProgress, progressById,
-                    directMinutes, vehicle, currentSOC, arrivalBufferPercent,
+                    directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache,
                 )
                 if (built != null) candidates.add(built)
             }
@@ -262,6 +282,7 @@ class TripPlanner {
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
+        legCache: MutableMap<String, RouteLeg?>,
     ): RouteOption? {
         data class OrderedVia(val via: PlannedVia, val progressKm: Double, val point: LatLon)
 
@@ -289,7 +310,8 @@ class TripPlanner {
         val orderedPoints = listOf(start) + ordered.map { it.point } + listOf(destination)
         val legs = mutableListOf<RouteLeg>()
         for (i in 0 until orderedPoints.size - 1) {
-            val leg = OrsClient.route(
+            val leg = cachedRoute(
+                legCache,
                 orderedPoints[i].latitude, orderedPoints[i].longitude,
                 orderedPoints[i + 1].latitude, orderedPoints[i + 1].longitude,
             ) ?: return null

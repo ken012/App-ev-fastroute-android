@@ -36,6 +36,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.evfastroute.android.map.RouteMap
 import com.evfastroute.android.nav.LocationProvider
@@ -69,6 +72,44 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
         return
     }
 
+    val context = LocalContext.current
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasLocationPermission = granted
+    }
+    // Trip-scoped, foreground-only live location for the arrival detector. Lives at the screen level
+    // (not inside the scrollable banner item), so scrolling can't pause it; the lifecycle observer
+    // stops updates when the app is backgrounded and resumes them (re-checking permission) on return.
+    val activeSession = vm.navSession
+    if (activeSession != null && hasLocationPermission) {
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner, activeSession.currentPoint) {
+            val provider = LocationProvider(context)
+            val feed: () -> Unit = { provider.start { lat, lon, acc, t -> vm.onLocationSample(lat, lon, acc, t) } }
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_RESUME -> {
+                        hasLocationPermission =
+                            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                        if (hasLocationPermission) feed()
+                    }
+                    Lifecycle.Event.ON_PAUSE -> provider.stop()
+                    else -> {}
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) feed()
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                provider.stop()
+            }
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -89,10 +130,11 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                 GuidedTripBanner(
                     session = session,
                     arrivalSuggested = vm.arrivalSuggested,
+                    hasLocationPermission = hasLocationPermission,
+                    onRequestLocationPermission = { permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
                     onHandoffRecorded = vm::recordSessionHandoff,
                     onArrived = vm::advanceGuidedTrip,
                     onEnd = vm::endGuidedTrip,
-                    onLocationSample = vm::onLocationSample,
                 )
             }
         }
@@ -533,35 +575,16 @@ private fun DirectionsRow(
 private fun GuidedTripBanner(
     session: NavigationSession,
     arrivalSuggested: Boolean,
+    hasLocationPermission: Boolean,
+    onRequestLocationPermission: () -> Unit,
     onHandoffRecorded: () -> Unit,
     onArrived: () -> Unit,
     onEnd: () -> Unit,
-    onLocationSample: (Double, Double, Double?, Long) -> Unit,
 ) {
     val context = LocalContext.current
     val point = session.currentPoint ?: return
     val position = session.completedPointCount + 1
     val isFinal = session.remainingPointCount <= 1
-
-    var hasLocationPermission by remember {
-        mutableStateOf(
-            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED,
-        )
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        hasLocationPermission = granted
-    }
-
-    // While permission is held and this point is current, feed live location to the arrival detector.
-    // Composition-scoped, so updates stop when the guided trip ends. Keyed on the current point so a
-    // fresh listener starts for each leg.
-    if (hasLocationPermission) {
-        DisposableEffect(session.currentPoint) {
-            val provider = LocationProvider(context)
-            provider.start { lat, lon, accuracy, sampleMillis -> onLocationSample(lat, lon, accuracy, sampleMillis) }
-            onDispose { provider.stop() }
-        }
-    }
 
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(
@@ -600,7 +623,7 @@ private fun GuidedTripBanner(
                 }
             }
             if (!hasLocationPermission) {
-                TextButton(onClick = { permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) }) {
+                TextButton(onClick = onRequestLocationPermission) {
                     Text("Enable location for automatic arrival")
                 }
             }

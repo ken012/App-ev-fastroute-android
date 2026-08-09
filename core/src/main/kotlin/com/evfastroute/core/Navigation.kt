@@ -139,8 +139,10 @@ object NavigationLinks {
         return "$base?$query"
     }
 
-    /** Percent-encodes with the same unreserved set as iOS (`alphanumerics + "-._~"`), so commas,
-     * pipes and spaces are escaped identically on both platforms. */
+    /** Percent-encodes reserved characters (commas, pipes, spaces, `&`, `=`, …) so the query is
+     * always well-formed. Uses an ASCII unreserved set; unlike iOS (whose `alphanumerics` spares
+     * all Unicode letters), non-ASCII characters in a place name are UTF-8 percent-encoded here —
+     * which is the safer, still-valid form. Coordinates are ASCII, so routing values are identical. */
     private fun percentEncode(value: String): String {
         val unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
         return buildString {

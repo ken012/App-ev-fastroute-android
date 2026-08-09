@@ -82,8 +82,11 @@ object RoutePlanner {
             soc = targetInt.toDouble()
         }
 
-        val finalArrival = (soc - legDistancesKm.last() * socPerKm).roundToInt().coerceIn(0, 100)
-        if (finalArrival < arrivalBufferPercent) return null
+        // Guard on the raw (unrounded) arrival, matching iOS — rounding first would let a trip that
+        // actually lands just below the reserve round up and pass.
+        val finalArrivalRaw = soc - legDistancesKm.last() * socPerKm
+        if (finalArrivalRaw < arrivalBufferPercent) return null
+        val finalArrival = finalArrivalRaw.roundToInt().coerceIn(0, 100)
         val drivingMinutes = legDurationMinutes.sum()
         val detourMinutes = maxOf(0, drivingMinutes - directMinutes)
         val averageReliability = if (sequence.isNotEmpty()) reliabilitySum / sequence.size else 100.0
@@ -200,8 +203,11 @@ object RoutePlanner {
             soc = targetInt.toDouble()
         }
 
-        val finalArrival = (soc - legDistancesKm.last() * socPerKm).roundToInt().coerceIn(0, 100)
-        if (finalArrival < arrivalBufferPercent) return null
+        // Guard on the raw (unrounded) arrival, matching iOS — rounding first would let a trip that
+        // actually lands just below the reserve round up and pass.
+        val finalArrivalRaw = soc - legDistancesKm.last() * socPerKm
+        if (finalArrivalRaw < arrivalBufferPercent) return null
+        val finalArrival = finalArrivalRaw.roundToInt().coerceIn(0, 100)
         val drivingMinutes = legDurationMinutes.sum()
         val detourMinutes = maxOf(0, drivingMinutes - directMinutes)
         val averageReliability = if (chargerCount > 0) reliabilitySum / chargerCount else 100.0

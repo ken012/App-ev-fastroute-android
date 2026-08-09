@@ -185,6 +185,9 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         settings.region = value
         // If the user hasn't overridden units, follow the new region's convention.
         usesMiles = settings.usesMiles
+        // Region changes connector standards + currency, so a prior plan may no longer be consistent.
+        options = emptyList()
+        selectedIndex = 0
     }
 
     fun updateUsesMiles(value: Boolean) {

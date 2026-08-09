@@ -64,6 +64,9 @@ fun RouteMap(
             mapView
         },
         update = {
+            // A new route (different option or fresh plan) should re-frame the camera, not stay
+            // latched on the first one.
+            if (routeGeometry != state.route) state.hasFitted = false
             state.route = routeGeometry
             state.chargers = chargers
             state.waypoints = waypoints
