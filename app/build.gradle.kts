@@ -33,7 +33,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.evfastroute.android"
+        applicationId = "com.kendennis.evfastroute"
         minSdk = 26
         targetSdk = 36
         versionCode = configuredValue("VERSION_CODE", "2").toIntOrNull()?.coerceAtLeast(1) ?: 2

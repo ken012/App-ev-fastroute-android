@@ -79,8 +79,8 @@ The Gradle signing block accepts Codemagic's `CM_KEYSTORE_*` variables and gener
 
 ## Google Play internal testing
 
-1. Decide the permanent package name before the first upload. This project currently uses
-   `com.evfastroute.android`; Play package IDs cannot be changed for an existing app.
+1. The permanent package name is `com.kendennis.evfastroute`; Play package IDs cannot be changed
+   for an existing app after its first upload.
 2. Create the app in Play Console and enable **Play App Signing**.
 3. Run the signed Codemagic workflow and upload its AAB to **Testing → Internal testing**.
 4. Complete the required policy/listing declarations in `PLAY_SUBMISSION.md`.

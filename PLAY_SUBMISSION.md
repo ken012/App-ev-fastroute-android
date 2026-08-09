@@ -6,7 +6,7 @@ defer until after launch.
 
 ## Identity and signing
 
-- [ ] Confirm `com.evfastroute.android` is the permanent package ID before the first Play upload.
+- [x] Confirm `com.kendennis.evfastroute` is the permanent package ID before the first Play upload.
 - [ ] Create the Play Console app and enable Play App Signing.
 - [ ] Complete Play developer identity and package-name verification when prompted. Starting
       September 30, 2026, verified developer/package registration is part of Android's rollout.
