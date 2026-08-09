@@ -51,7 +51,7 @@ platform-native but must match feature-for-feature.
 | Multi-stop through-waypoints SOC walk (global charging) | `RoutePlanner.buildRouteThroughWaypoints` | `MultiStopRouteTest` ✅ |
 | Multi-stop planning glue (corridor/progress/beam over full trip) | `:app` TripPlanner.planThrough | ✅ |
 | Multi-stop UI (add/edit/reorder/remove stops + map pins) | Compose WaypointRow + RouteMap | ✅ v1 |
-| Arrival timeline | Compose | ⬜ |
+| Arrival timeline (per-stop clock time + battery, depart→arrive) | Compose ArrivalTimeline | ✅ v1 |
 | Live traffic overlay | (limited on free stack) | ⬜ |
 | Sequential nav handoff (persistent session, per-stop advance) | Android intents | ⬜ (basic handoff done; session pending) |
 | Region + units model (currency/connectors/imperial/detect) | `Region.kt` + `Units` (:core) | `RegionTest` ✅ |

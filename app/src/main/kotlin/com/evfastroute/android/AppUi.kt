@@ -36,6 +36,7 @@ import com.evfastroute.android.map.RouteMap
 import com.evfastroute.android.nav.NavLauncher
 import com.evfastroute.core.EvCatalog
 import com.evfastroute.core.EvPreset
+import com.evfastroute.core.ItineraryStop
 import com.evfastroute.core.LatLon
 import com.evfastroute.core.NavigationApp
 import com.evfastroute.core.NavigationLinks
@@ -156,6 +157,12 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
             vm.destination?.let { dest ->
                 item { DirectionsRow(option = selected, destination = dest, preferredNav = vm.preferredNav) }
             }
+            item {
+                ArrivalTimeline(
+                    option = selected,
+                    destinationName = vm.destination?.placeName ?: "Destination",
+                )
+            }
         }
 
         itemsIndexed(vm.options) { index, option ->
@@ -167,6 +174,61 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
             )
         }
     }
+}
+
+@Composable
+private fun ArrivalTimeline(option: RouteOption, destinationName: String) {
+    // Absolute clock times are anchored to "now" as the departure moment (stable per option).
+    val departureMillis = remember(option) { System.currentTimeMillis() }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Trip timeline", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            TimelineRow(marker = "◉", title = "Depart", time = clockLabel(departureMillis, 0), trailing = "now")
+            option.itinerary.forEach { stop ->
+                val isCharge = stop.kind == ItineraryStop.Kind.CHARGING
+                TimelineRow(
+                    marker = if (isCharge) "⚡" else "◍",
+                    title = stop.name,
+                    time = clockLabel(departureMillis, stop.arrivalMinutesFromStart),
+                    trailing = "${if (isCharge) "Charge" else "Stop"} · ${stop.arrivalBatteryPercent}%",
+                )
+            }
+            TimelineRow(
+                marker = "◉",
+                title = destinationName,
+                time = clockLabel(departureMillis, option.totalEtaMinutes),
+                trailing = "Arrive · ${option.arrivalBatteryPercent}%",
+            )
+        }
+    }
+}
+
+@Composable
+private fun TimelineRow(marker: String, title: String, time: String, trailing: String?) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(marker, style = MaterialTheme.typography.bodyMedium)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            trailing?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Text(time, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private fun clockLabel(departureMillis: Long, offsetMinutes: Int): String {
+    val time = java.time.Instant.ofEpochMilli(departureMillis + offsetMinutes * 60_000L)
+        .atZone(java.time.ZoneId.systemDefault())
+        .toLocalTime()
+    return time.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))
 }
 
 @Composable
