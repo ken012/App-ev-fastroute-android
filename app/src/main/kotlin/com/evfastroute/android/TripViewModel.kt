@@ -1,6 +1,7 @@
 package com.evfastroute.android
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
@@ -14,6 +15,15 @@ import com.evfastroute.core.PlaceRanker
 import com.evfastroute.core.RouteOption
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+
+/** One of the driver's intermediate stops, with its own search box state. Fields are Compose state
+ * so the list can hold stable objects while each row edits independently. */
+class WaypointField(val id: Int) {
+    var text by mutableStateOf("")
+    var selected by mutableStateOf<PlaceCandidate?>(null)
+    var suggestions by mutableStateOf<List<PlaceCandidate>>(emptyList())
+    var searchJob: Job? = null
+}
 
 class TripViewModel : ViewModel() {
 
@@ -41,6 +51,10 @@ class TripViewModel : ViewModel() {
         private set
     var destinationSuggestions by mutableStateOf<List<PlaceCandidate>>(emptyList())
         private set
+
+    /** The driver's intermediate stops, in travel order (start → these → destination). */
+    val waypoints = mutableStateListOf<WaypointField>()
+    private var nextWaypointId = 0
 
     var currentSocPercent by mutableStateOf(80f)
     var arrivalBufferPercent by mutableStateOf(10f)
@@ -95,6 +109,39 @@ class TripViewModel : ViewModel() {
         if (index in options.indices) selectedIndex = index
     }
 
+    fun addWaypoint() { waypoints.add(WaypointField(nextWaypointId++)) }
+
+    fun removeWaypoint(index: Int) {
+        if (index in waypoints.indices) {
+            waypoints[index].searchJob?.cancel()
+            waypoints.removeAt(index)
+        }
+    }
+
+    /** Moves the stop at [index] by [delta] positions (−1 up, +1 down), reordering the trip. */
+    fun moveWaypoint(index: Int, delta: Int) {
+        val target = index + delta
+        if (index in waypoints.indices && target in waypoints.indices) {
+            val moved = waypoints[index]
+            waypoints[index] = waypoints[target]
+            waypoints[target] = moved
+        }
+    }
+
+    fun onWaypointTextChange(field: WaypointField, text: String) {
+        field.text = text
+        field.selected = null
+        field.searchJob?.cancel()
+        if (text.isBlank()) { field.suggestions = emptyList(); return }
+        field.searchJob = viewModelScope.launch { field.suggestions = search(text) }
+    }
+
+    fun selectWaypoint(field: WaypointField, candidate: PlaceCandidate) {
+        field.selected = candidate
+        field.text = candidate.placeName
+        field.suggestions = emptyList()
+    }
+
     fun showVehiclePicker() { isPickingVehicle = true }
     fun hideVehiclePicker() { isPickingVehicle = false }
 
@@ -113,14 +160,22 @@ class TripViewModel : ViewModel() {
             errorMessage = "Pick a start and destination from search."
             return
         }
+        if (waypoints.any { it.text.isNotBlank() && it.selected == null }) {
+            errorMessage = "Pick each stop from its search results."
+            return
+        }
+        val stops = waypoints.mapNotNull { it.selected }
         if (isPlanning) return
         isPlanning = true
         errorMessage = null
         options = emptyList()
+        val startPoint = LatLon(from.latitude, from.longitude)
+        val destinationPoint = LatLon(to.latitude, to.longitude)
         viewModelScope.launch {
-            val result = planner.plan(
-                start = LatLon(from.latitude, from.longitude),
-                destination = LatLon(to.latitude, to.longitude),
+            val result = planner.planThrough(
+                start = startPoint,
+                waypoints = stops,
+                destination = destinationPoint,
                 vehicle = vehicle,
                 currentSOC = currentSocPercent.toDouble(),
                 arrivalBufferPercent = arrivalBufferPercent.toDouble(),

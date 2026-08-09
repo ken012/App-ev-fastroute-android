@@ -70,6 +70,23 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                 onSelect = vm::selectStart,
             )
         }
+
+        itemsIndexed(vm.waypoints, key = { _, field -> field.id }) { index, field ->
+            WaypointRow(
+                index = index,
+                total = vm.waypoints.size,
+                field = field,
+                onTextChange = { vm.onWaypointTextChange(field, it) },
+                onSelect = { vm.selectWaypoint(field, it) },
+                onMoveUp = { vm.moveWaypoint(index, -1) },
+                onMoveDown = { vm.moveWaypoint(index, 1) },
+                onRemove = { vm.removeWaypoint(index) },
+            )
+        }
+        item {
+            TextButton(onClick = vm::addWaypoint) { Text("+ Add stop") }
+        }
+
         item {
             AddressField(
                 label = "Destination",
@@ -116,6 +133,7 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                     start = vm.start?.let { LatLon(it.latitude, it.longitude) },
                     destination = vm.destination?.let { LatLon(it.latitude, it.longitude) },
                     modifier = Modifier.fillMaxWidth().height(240.dp),
+                    waypoints = selected.userWaypoints.map { LatLon(it.latitude, it.longitude) },
                 )
             }
             vm.destination?.let { dest ->
@@ -125,6 +143,33 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
 
         itemsIndexed(vm.options) { index, option ->
             RouteCard(option, selected = index == vm.selectedIndex, onClick = { vm.selectOption(index) })
+        }
+    }
+}
+
+@Composable
+private fun WaypointRow(
+    index: Int,
+    total: Int,
+    field: WaypointField,
+    onTextChange: (String) -> Unit,
+    onSelect: (PlaceCandidate) -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        AddressField(
+            label = "Stop ${index + 1}",
+            text = field.text,
+            suggestions = field.suggestions,
+            onTextChange = onTextChange,
+            onSelect = onSelect,
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onMoveUp, enabled = index > 0, modifier = Modifier.weight(1f)) { Text("↑ Up") }
+            TextButton(onClick = onMoveDown, enabled = index < total - 1, modifier = Modifier.weight(1f)) { Text("↓ Down") }
+            TextButton(onClick = onRemove, modifier = Modifier.weight(1f)) { Text("Remove") }
         }
     }
 }

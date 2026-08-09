@@ -34,6 +34,7 @@ private class MapState {
     var style: Style? = null
     var route: List<LatLon> = emptyList()
     var chargers: List<LatLon> = emptyList()
+    var waypoints: List<LatLon> = emptyList()
     var endpoints: List<LatLon> = emptyList()
     var hasFitted = false
 }
@@ -45,6 +46,7 @@ fun RouteMap(
     start: LatLon?,
     destination: LatLon?,
     modifier: Modifier = Modifier,
+    waypoints: List<LatLon> = emptyList(),
 ) {
     val mapView = rememberMapViewWithLifecycle()
     val state = remember { MapState() }
@@ -64,6 +66,7 @@ fun RouteMap(
         update = {
             state.route = routeGeometry
             state.chargers = chargers
+            state.waypoints = waypoints
             state.endpoints = listOfNotNull(start, destination)
             state.style?.let { applyRoute(it, state.map, state) }
         },
@@ -100,6 +103,18 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
         )
     }
 
+    upsertSource(style, "waypoints", pointCollection(state.waypoints))
+    if (style.getLayer("waypoint-points") == null) {
+        style.addLayer(
+            CircleLayer("waypoint-points", "waypoints").withProperties(
+                PropertyFactory.circleColor("#F5A623"), // amber = the driver's own stops
+                PropertyFactory.circleRadius(7f),
+                PropertyFactory.circleStrokeColor("#FFFFFF"),
+                PropertyFactory.circleStrokeWidth(2f),
+            ),
+        )
+    }
+
     upsertSource(style, "endpoints", pointCollection(state.endpoints))
     if (style.getLayer("endpoint-points") == null) {
         style.addLayer(
@@ -113,7 +128,7 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
     }
 
     // Fit once to the whole route.
-    val all = state.route + state.chargers + state.endpoints
+    val all = state.route + state.chargers + state.waypoints + state.endpoints
     if (!state.hasFitted && all.size > 1 && map != null) {
         val bounds = LatLngBounds.Builder()
         all.forEach { bounds.include(LatLng(it.latitude, it.longitude)) }

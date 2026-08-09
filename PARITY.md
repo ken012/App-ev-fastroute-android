@@ -48,6 +48,9 @@ platform-native but must match feature-for-feature.
 | Vehicle picker + catalog (search, pick, region connectors) | Compose VehiclePicker + `EvCatalog` | ✅ v1 |
 | Nav handoff URL builders (Google/Waze/geo, waypoint cap, notes) | `Navigation.kt` (:core) | `NavigationLinksTest` ✅ |
 | Nav handoff launch (ACTION_VIEW intent) + Directions buttons | `:app` NavLauncher + DirectionsRow | ✅ v1 |
+| Multi-stop through-waypoints SOC walk (global charging) | `RoutePlanner.buildRouteThroughWaypoints` | `MultiStopRouteTest` ✅ |
+| Multi-stop planning glue (corridor/progress/beam over full trip) | `:app` TripPlanner.planThrough | ✅ |
+| Multi-stop UI (add/edit/reorder/remove stops + map pins) | Compose WaypointRow + RouteMap | ✅ v1 |
 | Arrival timeline | Compose | ⬜ |
 | Live traffic overlay | (limited on free stack) | ⬜ |
 | Sequential nav handoff (persistent session, per-stop advance) | Android intents | ⬜ (basic handoff done; session pending) |
