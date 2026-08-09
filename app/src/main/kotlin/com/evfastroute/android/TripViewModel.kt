@@ -50,6 +50,10 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     var navSession by mutableStateOf(settings.navigationSession)
         private set
 
+    /** True when live location suggests the driver has reached the current guided-trip point. */
+    var arrivalSuggested by mutableStateOf(false)
+        private set
+
     // The chosen car. Starts at a sensible default; the user can pick any catalog vehicle. The
     // planner only needs the physics ([EvPreset.toVehicle]); the preset keeps make/model for display.
     var selectedPreset by mutableStateOf(EvCatalog.default)
@@ -201,12 +205,14 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         val stops = option.orderedNavigationPoints()
         val destinationPoint = NavigationPoint(dest.latitude, dest.longitude, dest.placeName, NavigationPoint.Kind.DESTINATION)
         navSession = NavigationSession.create(stops, destinationPoint, app, System.currentTimeMillis())
+        arrivalSuggested = false
         settings.navigationSession = navSession
     }
 
     /** Records that the current point was just opened in the external app (starts the arrival clock). */
     fun recordSessionHandoff() {
         navSession = navSession?.recordHandoff(System.currentTimeMillis())
+        arrivalSuggested = false // new handoff → a fresh arrival cycle for this point
         settings.navigationSession = navSession
     }
 
@@ -214,12 +220,28 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     fun advanceGuidedTrip() {
         val advanced = navSession?.markCurrentPointComplete() ?: return
         navSession = if (advanced.isComplete) null else advanced
+        arrivalSuggested = false
         settings.navigationSession = navSession
     }
 
     fun endGuidedTrip() {
         navSession = null
+        arrivalSuggested = false
         settings.navigationSession = null
+    }
+
+    /**
+     * Feeds a live location sample into the guided-trip arrival detector. When the sample is fresh,
+     * accurate, settled and close to the current point, offers a confirm prompt exactly once (never
+     * auto-advances — the driver still taps Arrived). Ported gate lives in [NavigationSession].
+     */
+    fun onLocationSample(latitude: Double, longitude: Double, accuracyMeters: Double?, sampleMillis: Long) {
+        val session = navSession ?: return
+        if (session.shouldSuggestArrival(latitude, longitude, accuracyMeters, sampleMillis, System.currentTimeMillis())) {
+            arrivalSuggested = true
+            navSession = session.recordArrivalPrompt() // mark so the same point isn't prompted repeatedly
+            settings.navigationSession = navSession
+        }
     }
 
     fun selectPreset(preset: EvPreset) {

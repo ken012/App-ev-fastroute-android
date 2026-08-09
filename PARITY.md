@@ -56,7 +56,8 @@ platform-native but must match feature-for-feature.
 | Scheduled departure (shifts arrival-timeline clock) + free-flow ETA disclosure | Compose ArrivalTimeline | ✅ v1 |
 | Live traffic overlay / traffic-aware ETAs | — | ⛔ not feasible on the free stack (no free MapKit-equivalent traffic source; documented, not faked) |
 | Sequential-handoff session state machine (progress + arrival prompt) | `NavigationSession` (:core) | `NavigationSessionTest` | ✅ |
-| Sequential nav handoff (persistent session, per-stop advance) | Compose GuidedTripBanner + `SettingsStore` | ✅ v1 (manual confirm; GPS auto-prompt is the remaining sliver) |
+| Sequential nav handoff (persistent session, per-stop advance) | Compose GuidedTripBanner + `SettingsStore` | ✅ v1 (manual confirm) |
+| GPS auto-arrival prompt (live location → shouldSuggestArrival) | `LocationProvider` (LocationManager) + GuidedTripBanner | ✅ v1 (foreground; never auto-advances) |
 | Region + units model (currency/connectors/imperial/detect) | `Region.kt` + `Units` (:core) | `RegionTest` ✅ |
 | Settings (units, region, preferred nav) + persistence | Compose SettingsScreen + `SettingsStore` | ✅ v1 |
 | Tester distribution (installable APK + Firebase App Distribution) | CI artifact + guarded `distribute` job | ✅ v1 (see DISTRIBUTION.md) |

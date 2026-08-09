@@ -1,5 +1,9 @@
 package com.evfastroute.android
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +26,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.evfastroute.android.map.RouteMap
+import com.evfastroute.android.nav.LocationProvider
 import com.evfastroute.android.nav.NavLauncher
 import com.evfastroute.core.EvCatalog
 import com.evfastroute.core.EvPreset
@@ -82,9 +88,11 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
             item {
                 GuidedTripBanner(
                     session = session,
+                    arrivalSuggested = vm.arrivalSuggested,
                     onHandoffRecorded = vm::recordSessionHandoff,
                     onArrived = vm::advanceGuidedTrip,
                     onEnd = vm::endGuidedTrip,
+                    onLocationSample = vm::onLocationSample,
                 )
             }
         }
@@ -524,14 +532,36 @@ private fun DirectionsRow(
 @Composable
 private fun GuidedTripBanner(
     session: NavigationSession,
+    arrivalSuggested: Boolean,
     onHandoffRecorded: () -> Unit,
     onArrived: () -> Unit,
     onEnd: () -> Unit,
+    onLocationSample: (Double, Double, Double?, Long) -> Unit,
 ) {
     val context = LocalContext.current
     val point = session.currentPoint ?: return
     val position = session.completedPointCount + 1
     val isFinal = session.remainingPointCount <= 1
+
+    var hasLocationPermission by remember {
+        mutableStateOf(
+            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasLocationPermission = granted
+    }
+
+    // While permission is held and this point is current, feed live location to the arrival detector.
+    // Composition-scoped, so updates stop when the guided trip ends. Keyed on the current point so a
+    // fresh listener starts for each leg.
+    if (hasLocationPermission) {
+        DisposableEffect(session.currentPoint) {
+            val provider = LocationProvider(context)
+            provider.start { lat, lon, accuracy, sampleMillis -> onLocationSample(lat, lon, accuracy, sampleMillis) }
+            onDispose { provider.stop() }
+        }
+    }
 
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(
@@ -544,6 +574,12 @@ private fun GuidedTripBanner(
                 color = MaterialTheme.colorScheme.primary,
             )
             Text("Next: ${point.name}", style = MaterialTheme.typography.titleMedium)
+            if (arrivalSuggested) {
+                Text(
+                    "You seem to have arrived at ${point.name}. Confirm to continue.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
@@ -552,8 +588,20 @@ private fun GuidedTripBanner(
                     },
                     modifier = Modifier.weight(1f),
                 ) { Text("Open in ${session.app.displayName}") }
-                OutlinedButton(onClick = onArrived, modifier = Modifier.weight(1f)) {
-                    Text(if (isFinal) "Arrived" else "Arrived · next")
+                // Emphasise the confirm action once arrival is suggested.
+                if (arrivalSuggested) {
+                    Button(onClick = onArrived, modifier = Modifier.weight(1f)) {
+                        Text(if (isFinal) "Arrived" else "Arrived · next")
+                    }
+                } else {
+                    OutlinedButton(onClick = onArrived, modifier = Modifier.weight(1f)) {
+                        Text(if (isFinal) "Arrived" else "Arrived · next")
+                    }
+                }
+            }
+            if (!hasLocationPermission) {
+                TextButton(onClick = { permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) }) {
+                    Text("Enable location for automatic arrival")
                 }
             }
             TextButton(onClick = onEnd) { Text("End guided trip") }
