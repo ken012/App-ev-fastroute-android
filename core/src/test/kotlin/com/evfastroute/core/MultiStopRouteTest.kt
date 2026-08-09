@@ -62,6 +62,8 @@ class MultiStopRouteTest {
         assertEquals(10, route.arrivalBatteryPercent)
         assertEquals(listOf(ItineraryStop.Kind.VISIT, ItineraryStop.Kind.CHARGING), route.itinerary.map { it.kind })
         assertEquals(57, route.itinerary[0].arrivalBatteryPercent)       // battery when reaching the coffee stop
+        assertEquals(60, route.itinerary[0].arrivalMinutesFromStart)     // clock at the visit: 60m drive
+        assertEquals(150, route.itinerary[1].arrivalMinutesFromStart)    // clock at the charger: 60 + 90m drive
         assertEquals(listOf(0), route.userWaypointSegmentIndices)        // waypoint reached at end of leg 0
         assertEquals(listOf(1), route.stopSegmentIndices)                // charger reached at end of leg 1
         assertEquals(1, route.userWaypoints.size)
@@ -96,6 +98,10 @@ class MultiStopRouteTest {
         )
         assertEquals(33, route.itinerary[1].arrivalBatteryPercent)      // battery at the visit
         assertEquals(10, route.arrivalBatteryPercent)
+        // The clock must accumulate charger dwell: A is reached after 150m drive; B's arrival time
+        // must exceed the drive-only sum (150+60+60=270), proving A's charging minutes were added.
+        assertEquals(150, route.itinerary[0].arrivalMinutesFromStart)
+        assertTrue(route.itinerary[2].arrivalMinutesFromStart > 270)
     }
 
     @Test

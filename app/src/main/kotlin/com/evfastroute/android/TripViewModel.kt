@@ -104,6 +104,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
 
     private var startSearchJob: Job? = null
     private var destinationSearchJob: Job? = null
+    private var planJob: Job? = null
 
     fun onStartTextChange(text: String) {
         startText = text
@@ -185,7 +186,16 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         settings.region = value
         // If the user hasn't overridden units, follow the new region's convention.
         usesMiles = settings.usesMiles
-        // Region changes connector standards + currency, so a prior plan may no longer be consistent.
+        // Region changes connector standards + currency, so a prior (or in-flight) plan may no longer
+        // be consistent — cancel it and clear the results.
+        cancelPlanning()
+    }
+
+    /** Cancels any in-flight plan and clears its (now-stale) results. */
+    private fun cancelPlanning() {
+        planJob?.cancel()
+        planJob = null
+        isPlanning = false
         options = emptyList()
         selectedIndex = 0
     }
@@ -250,9 +260,9 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     fun selectPreset(preset: EvPreset) {
         selectedPreset = preset
         isPickingVehicle = false
-        // A different car changes the whole plan; clear stale options so nothing misleads.
-        options = emptyList()
-        selectedIndex = 0
+        // A different car changes the whole plan; cancel any in-flight plan (so it can't finish and
+        // overwrite these with previous-car options) and clear stale options so nothing misleads.
+        cancelPlanning()
     }
 
     fun plan() {
@@ -267,13 +277,13 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val stops = waypoints.mapNotNull { it.selected }
-        if (isPlanning) return
+        planJob?.cancel() // supersede any in-flight plan so a stale result can't overwrite this one
         isPlanning = true
         errorMessage = null
         options = emptyList()
         val startPoint = LatLon(from.latitude, from.longitude)
         val destinationPoint = LatLon(to.latitude, to.longitude)
-        viewModelScope.launch {
+        planJob = viewModelScope.launch {
             val result = planner.planThrough(
                 start = startPoint,
                 waypoints = stops,

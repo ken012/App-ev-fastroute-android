@@ -92,11 +92,20 @@ object EvCatalog {
      * Token-AND search over "year make model", diacritic/case/punctuation-insensitive, also matching
      * against a whitespace-stripped haystack so "modely" finds "Model Y". Mirrors iOS EVCatalog.search.
      */
+    // Cache the (expensive) normalized "year make model" haystack per preset so a keystroke
+    // normalizes only the query, not all ~789 catalog entries. Keyed by the unique catalogIdentifier.
+    private val haystackByIdentifier = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun searchHaystack(preset: EvPreset): String =
+        haystackByIdentifier.getOrPut(preset.catalogIdentifier) {
+            normalize("${preset.year} ${preset.make} ${preset.model}")
+        }
+
     fun search(query: String): List<EvPreset> {
         val terms = normalize(query).split(' ').filter { it.isNotBlank() }
         if (terms.isEmpty()) return presets
         return presets.filter { preset ->
-            val haystack = normalize("${preset.year} ${preset.make} ${preset.model}")
+            val haystack = searchHaystack(preset)
             val compact = haystack.replace(" ", "")
             terms.all { term -> haystack.contains(term) || compact.contains(term) }
         }

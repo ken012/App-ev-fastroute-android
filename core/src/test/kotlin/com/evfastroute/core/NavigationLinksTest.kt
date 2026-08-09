@@ -107,6 +107,18 @@ class NavigationLinksTest {
     }
 
     @Test
+    fun encodesUrlReservedCharactersInNames() {
+        // A name with & # space must be percent-encoded so it can't split the query or become a
+        // fragment: & → %26, space → %20, # → %23.
+        val waze = NavigationLinks.wazeDirectionsUrl(point(45.0, -75.0, "A&W #3"))
+        assertNotNull(waze)
+        assertTrue(waze.contains("q=A%26W%20%233"), "waze q not encoded: $waze")
+        assertTrue(!waze.contains("q=A&W"))
+        val geo = NavigationLinks.geoUrl(point(45.0, -75.0, "A&W #3"))
+        assertTrue(geo.contains("(A%26W%20%233)"), "geo label not encoded: $geo")
+    }
+
+    @Test
     fun fromSerializedFallsBackToGoogle() {
         assertEquals(NavigationApp.WAZE, NavigationApp.fromSerialized("waze"))
         assertEquals(NavigationApp.GOOGLE_MAPS, NavigationApp.fromSerialized("nonsense"))

@@ -28,11 +28,13 @@ class SettingsStore(context: Context) {
         get() = NavigationApp.fromSerialized(prefs.getString(KEY_NAV, null))
         set(value) = prefs.edit().putString(KEY_NAV, value.serialized).apply()
 
-    /** An in-progress sequential handoff, restored across launches; null when none is active. */
+    /** An in-progress sequential handoff, restored across launches; null when none is active.
+     * A decoded session whose index is out of range (corrupt prefs / backup-restore / already
+     * complete) has no current point — drop it so it can't become an invisible, unstoppable session. */
     var navigationSession: NavigationSession?
         get() = prefs.getString(KEY_SESSION, null)?.let {
             runCatching { json.decodeFromString(NavigationSession.serializer(), it) }.getOrNull()
-        }
+        }?.takeIf { it.currentPoint != null }
         set(value) {
             if (value == null) {
                 prefs.edit().remove(KEY_SESSION).apply()

@@ -48,7 +48,7 @@ platform-native but must match feature-for-feature.
 | Route options list (title/ETA/stops/cost/itinerary) | Compose RouteCard | ✅ v1 |
 | Vehicle picker + catalog (search, pick, region connectors) | Compose VehiclePicker + `EvCatalog` | ✅ v1 |
 | Nav handoff URL builders (Google/Waze/geo, waypoint cap, notes) | `Navigation.kt` (:core) | `NavigationLinksTest` ✅ |
-| Nav handoff launch (ACTION_VIEW intent) + Directions buttons | `:app` NavLauncher + DirectionsRow | ✅ v1 |
+| Nav handoff launch (ACTION_VIEW intent) + Directions buttons (interleaves user waypoints + chargers) | `:app` NavLauncher + DirectionsRow | ✅ v1 |
 | Multi-stop through-waypoints SOC walk (global charging) | `RoutePlanner.buildRouteThroughWaypoints` | `MultiStopRouteTest` ✅ |
 | Multi-stop planning glue (corridor/progress/beam over full trip) | `:app` TripPlanner.planThrough | ✅ |
 | Multi-stop UI (add/edit/reorder/remove stops + map pins) | Compose WaypointRow + RouteMap | ✅ v1 |

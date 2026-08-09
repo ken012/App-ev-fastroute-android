@@ -51,6 +51,7 @@ import com.evfastroute.core.NavigationApp
 import com.evfastroute.core.NavigationLinks
 import com.evfastroute.core.NavigationPoint
 import com.evfastroute.core.NavigationSession
+import com.evfastroute.core.orderedNavigationPoints
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.Region
 import com.evfastroute.core.RouteOption
@@ -85,7 +86,7 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
     // (not inside the scrollable banner item), so scrolling can't pause it; the lifecycle observer
     // stops updates when the app is backgrounded and resumes them (re-checking permission) on return.
     val activeSession = vm.navSession
-    if (activeSession != null && hasLocationPermission) {
+    if (activeSession != null && activeSession.currentPoint != null && hasLocationPermission) {
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner, activeSession.currentPoint) {
             val provider = LocationProvider(context)
@@ -530,13 +531,13 @@ private fun DirectionsRow(
     val context = LocalContext.current
     var note by remember(option, destination) { mutableStateOf<String?>(null) }
 
-    val stops = option.chargingStops.map {
-        NavigationPoint(it.latitude, it.longitude, it.name, NavigationPoint.Kind.CHARGING)
-    }
+    // Interleave the driver's own waypoints AND charging stops in travel order (matches iOS), so a
+    // one-tap handoff never silently skips a stop the user added.
+    val stops = option.orderedNavigationPoints()
     val destPoint = NavigationPoint(
         destination.latitude, destination.longitude, destination.placeName, NavigationPoint.Kind.DESTINATION,
     )
-    val hasStops = option.chargingStops.isNotEmpty() || option.userWaypoints.isNotEmpty()
+    val hasStops = stops.isNotEmpty()
 
     fun launch(app: NavigationApp) {
         val plan = NavigationLinks.handoff(app, origin = null, stops = stops, destination = destPoint)
