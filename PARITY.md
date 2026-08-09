@@ -37,8 +37,10 @@ platform-native but must match feature-for-feature.
 |---|---|---|
 | OCM response parsing → Charger (+ connector/reliability) | `OpenChargeMap.kt` (:core) | `OpenChargeMapTest` ✅ |
 | OCM HTTP fetch | `:app` OpenChargeMapClient | ⬜ |
-| Driving route legs | `OpenRouteServiceClient.kt` | ⬜ |
-| Address autocomplete/resolve | `PhotonClient.kt` | ⬜ |
+| ORS directions parsing → RouteLeg | `OpenRouteService.kt` (:core) | `OpenRouteServiceTest` ✅ |
+| ORS HTTP fetch | `:app` client | ⬜ |
+| Photon geocoding parsing → PlaceCandidate | `Photon.kt` (:core) | `PhotonTest` ✅ |
+| Photon HTTP fetch | `:app` client | ⬜ |
 | Map + charger pins + route line | MapLibre Compose | ⬜ |
 | Planner (start/dest/stops/battery/departure) | Compose | ⬜ |
 | Route options (fastest/fewest-stops/reliable/cost) | Compose | ⬜ |
