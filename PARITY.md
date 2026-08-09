@@ -23,7 +23,10 @@ platform-native but must match feature-for-feature.
 | `RouteOptimizationService` energyPlan | `EnergyModel.kt` | `EnergyModelTest` | ✅ done |
 | `RouteObjective.swift` | `RouteObjective.kt` | `RouteObjectiveTest` | ✅ done |
 | Charger projection / corridor | `Corridor.kt` | `CorridorTest` | ✅ done |
-| Multi-objective selection + SOC-band taper feasibility | `RoutePlanner.kt` | — | ⬜ |
+| Planner models (Charger/Vehicle/ConnectorType/ProjectedCharger) | `Models.kt` | `ChargerScoringTest` | ✅ done |
+| Charger scoring (speedScore/networkMatches/sequenceKey) | `ChargerScoring.kt` | `ChargerScoringTest` | ✅ done |
+| Beam-search sequence selection (objective-aware) | `ChargerSequenceSelector.kt` | `ChargerSequenceSelectorTest` | ✅ done |
+| Build/optimize pipeline (verify legs, dedup-merge, comparator) | `:app` (needs routing I/O) | — | ⬜ next |
 | `RangeEstimator.swift` | `RangeEstimator.kt` | — | ⬜ |
 | `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | — | ⬜ |
 
