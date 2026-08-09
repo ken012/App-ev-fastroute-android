@@ -91,11 +91,57 @@ class TripPlanner {
             }
         }
 
+        // Fewest-stops guarantee (iOS parity): if the minimum-stop-count sequences all failed road
+        // verification, try more at that count before optimize lets a longer route wear the label.
+        ensureFewestStops(candidates, projected, totalDistanceKm, vehicle, currentSOC, arrivalBufferPercent, seen) { sequence, key ->
+            buildFromSequence(key, sequence, start, destination, directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache)
+        }
+
         val options = RoutePlanner.optimize(candidates)
         return if (options.isEmpty()) {
             Result.Error("No safe charging plan spans this route. Try a lower minimum charger speed or more starting charge.")
         } else {
             Result.Success(options)
+        }
+    }
+
+    /**
+     * Ports iOS findRoutes' fewest-stops fallback: when no built candidate reached the minimum
+     * achievable stop count (the leading low-count sequences may have failed the road-routed leg
+     * checks), generate more sequences at that same count (skipping already-tried ones) and build up
+     * to 6 more, stopping at the first success — so [RoutePlanner.optimize] can't label a
+     * higher-stop-count route as "Fewest charging stops" when a shorter one is actually achievable.
+     */
+    private suspend fun ensureFewestStops(
+        candidates: MutableList<RouteOption>,
+        projected: List<ProjectedCharger>,
+        totalDistanceKm: Double,
+        vehicle: Vehicle,
+        currentSOC: Double,
+        arrivalBufferPercent: Double,
+        seen: MutableSet<String>,
+        build: suspend (sequence: List<Charger>, key: String) -> RouteOption?,
+    ) {
+        val fewest = ChargerSequenceSelector.selectChargerSequences(
+            projected = projected,
+            totalDistanceKm = totalDistanceKm,
+            vehicle = vehicle,
+            currentSOC = currentSOC,
+            arrivalBufferPercent = arrivalBufferPercent,
+            prefer = preference(RouteObjective.FEWEST_STOPS, vehicle),
+            objective = RouteObjective.FEWEST_STOPS,
+            maxSequences = 24,
+        )
+        val minCount = fewest.minOfOrNull { it.size } ?: return
+        if (candidates.any { it.chargingStops.size == minCount }) return
+        var attempts = 0
+        for (sequence in fewest.filter { it.size == minCount }) {
+            if (attempts >= 6) break
+            val key = ChargerScoring.sequenceKey(sequence.map { it.id })
+            if (!seen.add(key)) continue
+            attempts++
+            val built = build(sequence, key)
+            if (built != null) { candidates.add(built); break }
         }
     }
 
@@ -267,6 +313,13 @@ class TripPlanner {
                 )
                 if (built != null) candidates.add(built)
             }
+        }
+
+        ensureFewestStops(candidates, projected, totalDistanceKm, vehicle, currentSOC, arrivalBufferPercent, seen) { sequence, key ->
+            buildThroughSequence(
+                key, sequence, start, destination, waypoints, waypointProgress, progressById,
+                directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache,
+            )
         }
 
         val options = RoutePlanner.optimize(candidates)
