@@ -34,3 +34,48 @@ jobs:
           gradle-version: '8.10.2'
       - name: Assemble Android debug APK
         run: gradle :app:assembleDebug --no-daemon --console=plain
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  # Emails each main build to the "testers" group via Firebase App Distribution. Dormant until the
+  # FIREBASE_APP_ID / FIREBASE_SERVICE_ACCOUNT repo secrets are set (see DISTRIBUTION.md); until then
+  # every step is skipped and the job passes, so it never blocks CI.
+  distribute:
+    runs-on: ubuntu-latest
+    needs: app
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Check Firebase configuration
+        id: guard
+        run: |
+          if [ -n "$FIREBASE_APP_ID" ] && [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Firebase secrets not set — skipping distribution."
+          fi
+      - name: Download APK
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: app-debug-apk
+      - name: Write service account
+        if: steps.guard.outputs.configured == 'true'
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+      - name: Distribute to testers
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: |
+          npm install -g firebase-tools
+          firebase appdistribution:distribute app-debug.apk \
+            --app "$FIREBASE_APP_ID" \
+            --groups testers \
+            --release-notes "Automated build from $GITHUB_SHA"

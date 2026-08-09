@@ -162,19 +162,19 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     fun showSettings() { isEditingSettings = true }
     fun hideSettings() { isEditingSettings = false }
 
-    fun setRegion(value: Region) {
+    fun updateRegion(value: Region) {
         region = value
         settings.region = value
         // If the user hasn't overridden units, follow the new region's convention.
         usesMiles = settings.usesMiles
     }
 
-    fun setUsesMiles(value: Boolean) {
+    fun updateUsesMiles(value: Boolean) {
         usesMiles = value
         settings.usesMiles = value
     }
 
-    fun setPreferredNav(value: NavigationApp) {
+    fun updatePreferredNav(value: NavigationApp) {
         preferredNav = value
         settings.preferredNav = value
     }

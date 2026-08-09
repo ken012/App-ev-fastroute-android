@@ -190,8 +190,8 @@ private fun SettingsScreen(vm: TripViewModel) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Distance units", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ToggleButton("Kilometers", selected = !vm.usesMiles, modifier = Modifier.weight(1f)) { vm.setUsesMiles(false) }
-                    ToggleButton("Miles", selected = vm.usesMiles, modifier = Modifier.weight(1f)) { vm.setUsesMiles(true) }
+                    ToggleButton("Kilometers", selected = !vm.usesMiles, modifier = Modifier.weight(1f)) { vm.updateUsesMiles(false) }
+                    ToggleButton("Miles", selected = vm.usesMiles, modifier = Modifier.weight(1f)) { vm.updateUsesMiles(true) }
                 }
             }
         }
@@ -202,7 +202,7 @@ private fun SettingsScreen(vm: TripViewModel) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     NavigationApp.entries.forEach { app ->
                         ToggleButton(shortNavLabel(app), selected = vm.preferredNav == app, modifier = Modifier.weight(1f)) {
-                            vm.setPreferredNav(app)
+                            vm.updatePreferredNav(app)
                         }
                     }
                 }
@@ -214,7 +214,7 @@ private fun SettingsScreen(vm: TripViewModel) {
         }
         items(Region.entries) { region ->
             Card(
-                modifier = Modifier.fillMaxWidth().clickable { vm.setRegion(region) },
+                modifier = Modifier.fillMaxWidth().clickable { vm.updateRegion(region) },
                 colors = if (region == vm.region) {
                     CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                 } else {

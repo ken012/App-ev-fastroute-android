@@ -56,6 +56,7 @@ platform-native but must match feature-for-feature.
 | Sequential nav handoff (persistent session, per-stop advance) | Android intents | ⬜ (basic handoff done; session pending) |
 | Region + units model (currency/connectors/imperial/detect) | `Region.kt` + `Units` (:core) | `RegionTest` ✅ |
 | Settings (units, region, preferred nav) + persistence | Compose SettingsScreen + `SettingsStore` | ✅ v1 |
+| Tester distribution (installable APK + Firebase App Distribution) | CI artifact + guarded `distribute` job | ✅ v1 (see DISTRIBUTION.md) |
 
 ## Verification
 - `:core` builds + tests on free GitHub Actions (Linux) — proves logic parity.
