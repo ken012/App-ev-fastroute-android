@@ -8,6 +8,8 @@ defer until after launch.
 
 - [ ] Confirm `com.evfastroute.android` is the permanent package ID before the first Play upload.
 - [ ] Create the Play Console app and enable Play App Signing.
+- [ ] Complete Play developer identity and package-name verification when prompted. Starting
+      September 30, 2026, verified developer/package registration is part of Android's rollout.
 - [ ] Generate/upload the permanent upload keystore as described in `DISTRIBUTION.md`; keep two
       independent offline backups and record the passwords in a password manager.
 - [ ] Use a strictly increasing `VERSION_CODE` for every uploaded AAB.
@@ -24,8 +26,9 @@ defer until after launch.
 
 ## Privacy, data safety, and content
 
-- [ ] Host `PRIVACY.md` at the exact public `PRIVACY_POLICY_URL` used in the release build and keep
-      the support tracker monitored.
+- [ ] Host `PRIVACY.md` at the exact public `PRIVACY_POLICY_URL` used in the release build. Publish
+      a dedicated monitored privacy/support email; do not ask users to post sensitive requests in
+      a public issue tracker.
 - [ ] Complete Google Play **Data safety** from observed release behavior: place queries, selected
       route/stop coordinates, optional foreground device location, and ordinary network metadata
       leave the device to provide app functionality. No account, ads, analytics, or data sale are
@@ -62,6 +65,9 @@ defer until after launch.
       battery/consumption values survive relaunch; verify saved-trip/session expiry behavior.
 - [ ] Internal testing first, then closed testing. Review crash/ANR, battery, network, and tester
       feedback before any production rollout.
+- [ ] If this is a newly created personal Play developer account, satisfy Play's production-access
+      gate: at least 12 opted-in closed-test users continuously for 14 days, then apply for
+      production access in Play Console.
 
 ## Launch control
 
