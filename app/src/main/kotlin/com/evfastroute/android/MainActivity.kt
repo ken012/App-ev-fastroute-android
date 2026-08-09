@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.evfastroute.core.ChargePlanner
@@ -37,7 +38,7 @@ private fun StartupScreen() {
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Arrangement.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
     ) {
         Text("EV FastRoute", style = MaterialTheme.typography.headlineMedium)
         Text("Android — shared core linked ✓", style = MaterialTheme.typography.titleMedium)
