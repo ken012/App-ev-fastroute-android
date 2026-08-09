@@ -92,6 +92,9 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
             val feed: () -> Unit = { provider.start { lat, lon, acc, t -> vm.onLocationSample(lat, lon, acc, t) } }
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
+                    // addObserver dispatches ON_RESUME immediately when already resumed, so this
+                    // also covers the initial start — no separate initial feed() (which would
+                    // double-register).
                     Lifecycle.Event.ON_RESUME -> {
                         hasLocationPermission =
                             context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -102,7 +105,6 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
-            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) feed()
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(observer)
                 provider.stop()
