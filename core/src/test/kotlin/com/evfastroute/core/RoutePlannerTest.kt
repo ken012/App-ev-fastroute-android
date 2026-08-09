@@ -61,4 +61,74 @@ class RoutePlannerTest {
         assertTrue(options[0].supportedObjectives.contains(RouteObjective.FEWEST_STOPS))
         assertEquals(RouteObjective.FASTEST, options[0].objective) // first planner objective labels it
     }
+
+    @Test
+    fun chargeTargetHasNoSixtyPercentFloor() {
+        // Reaching the charger at 23% and needing ~33% to finish must target ~33%, NOT 60%.
+        // (An earlier Android-only 60% floor over-charged here and diverged from iOS.)
+        val route = RoutePlanner.buildRoute(
+            id = "r", sequence = listOf(charger("A")),
+            legDistancesKm = listOf(250.0, 100.0), legDurationMinutes = listOf(150, 60),
+            directMinutes = 210, vehicle = vehicle, currentSOC = 80.0, arrivalBufferPercent = 10.0,
+        )!!
+        assertEquals(23, route.chargingStops[0].arrivalBatteryPercent)
+        assertEquals(33, route.chargingStops[0].targetBatteryPercent) // reach dest + buffer, no floor
+    }
+
+    @Test
+    fun belowFloorRouteMatchesTheMultiStopBuilder() {
+        // The single-leg and through-waypoints builders must agree even when the target is under 60%.
+        val single = RoutePlanner.buildRoute(
+            id = "r", sequence = listOf(charger("A")),
+            legDistancesKm = listOf(250.0, 100.0), legDurationMinutes = listOf(150, 60),
+            directMinutes = 210, vehicle = vehicle, currentSOC = 80.0, arrivalBufferPercent = 10.0,
+        )!!
+        val through = RoutePlanner.buildRouteThroughWaypoints(
+            id = "r", vias = listOf(PlannedVia(charger = charger("A"), userWaypointIndex = null, name = "A")),
+            userWaypoints = emptyList(),
+            legDistancesKm = listOf(250.0, 100.0), legDurationMinutes = listOf(150, 60),
+            directMinutes = 210, vehicle = vehicle, currentSOC = 80.0, arrivalBufferPercent = 10.0,
+        )!!
+        assertEquals(single.chargingStops, through.chargingStops)
+    }
+
+    private fun candidate(id: String, eta: Int, cost: Double, risk: Double, stops: List<String>) = RouteOption(
+        id = id, objective = RouteObjective.VERIFIED, supportedObjectives = emptySet(),
+        title = "c", mode = "c", totalEtaMinutes = eta, drivingMinutes = eta, chargingMinutes = 0,
+        detourMinutes = 0, arrivalBatteryPercent = 20, riskScore = risk,
+        chargingStops = stops.map { ChargingStop(it, it, 0.0, 0.0, 20, 60, 10) },
+        itinerary = emptyList(), estimatedChargingCostValue = cost,
+    )
+
+    @Test
+    fun optimizePicksCorrectWinnerPerObjective() {
+        val fastPricey = candidate("Y", eta = 300, cost = 30.0, risk = 20.0, stops = listOf("c3")) // fast, 1 stop
+        val slowCheap = candidate("X", eta = 400, cost = 10.0, risk = 5.0, stops = listOf("c1", "c2")) // cheap, reliable
+        val options = RoutePlanner.optimize(listOf(fastPricey, slowCheap))
+
+        val fastest = options.first { RouteObjective.FASTEST in it.supportedObjectives }
+        assertEquals(300, fastest.totalEtaMinutes)                 // FASTEST → lowest ETA
+        assertEquals(1, fastest.chargingStops.size)
+        assertTrue(RouteObjective.FEWEST_STOPS in fastest.supportedObjectives) // fewest stops → same route
+
+        val cheapest = options.first { RouteObjective.LOWEST_COST in it.supportedObjectives }
+        assertEquals(10.0, cheapest.estimatedChargingCostValue)    // LOWEST_COST → lowest cost
+        assertTrue(RouteObjective.RELIABLE in cheapest.supportedObjectives) // RELIABLE → lowest risk
+    }
+
+    @Test
+    fun rejectsPhantomZeroChargeStop() {
+        // Arriving with exactly enough charge to continue must drop the candidate, not emit a 70→70 stop.
+        val bigBattery = Vehicle(
+            batteryCapacityKwh = 100.0, efficiencyKwhPerKm = 0.2, maxDcChargingKw = 250,
+            connectorTypes = listOf(ConnectorType.CCS),
+        )
+        assertNull(
+            RoutePlanner.buildRoute(
+                id = "r", sequence = listOf(charger("A")),
+                legDistancesKm = listOf(100.0, 100.0), legDurationMinutes = listOf(60, 60),
+                directMinutes = 120, vehicle = bigBattery, currentSOC = 90.0, arrivalBufferPercent = 10.0,
+            ),
+        )
+    }
 }

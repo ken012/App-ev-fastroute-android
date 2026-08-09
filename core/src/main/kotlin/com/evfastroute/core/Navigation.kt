@@ -119,7 +119,10 @@ object NavigationLinks {
         return encodedUrl("https://waze.com/ul", params)
     }
 
-    /** `geo:` URI for the system default maps app (opens the Android app chooser). */
+    /** `geo:` URI for the system default maps app (opens the Android app chooser). Note: the `geo:`
+     * scheme has no "navigate" flag, so this opens the destination for the driver to start from —
+     * unlike the Google (`dir_action=navigate`) and Waze (`navigate=yes`) links which auto-start
+     * turn-by-turn. Chosen over a Google-specific `google.navigation:` intent to stay app-neutral. */
     fun geoUrl(destination: NavigationPoint): String {
         val coord = coordinateValue(destination)
         val name = destination.name.trim()

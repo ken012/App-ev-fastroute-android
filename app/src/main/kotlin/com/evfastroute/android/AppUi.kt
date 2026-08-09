@@ -563,6 +563,13 @@ private fun DirectionsRow(
                 }
             }
         }
+        // Capability-accurate wording for the preferred app (e.g. "Full trip in Google Maps" vs
+        // "Next stop in Waze") — signals up front when a single link carries only the next stop.
+        Text(
+            NavigationLinks.actionLabel(preferredNav, intermediateStopCount = stops.size),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (hasStops) {
             OutlinedButton(onClick = onStartGuided, modifier = Modifier.fillMaxWidth()) {
                 Text("Start guided trip (stop by stop)")

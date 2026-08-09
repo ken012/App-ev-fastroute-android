@@ -16,6 +16,8 @@ import com.evfastroute.core.NavigationPoint
 import com.evfastroute.core.NavigationSession
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.PlaceRanker
+import com.evfastroute.core.RangeDrivingStyle
+import com.evfastroute.core.RangeEstimator
 import com.evfastroute.core.Region
 import com.evfastroute.core.RouteOption
 import com.evfastroute.core.orderedNavigationPoints
@@ -58,7 +60,18 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     // planner only needs the physics ([EvPreset.toVehicle]); the preset keeps make/model for display.
     var selectedPreset by mutableStateOf(EvCatalog.default)
         private set
-    private val vehicle get() = selectedPreset.toVehicle(european = region.isEuropean)
+    // Plan with condition-adjusted physics (iOS parity): capacity scaled by battery health and a
+    // baseline uncertainty margin (>=5%) added to consumption, so plans aren't over-optimistic.
+    // (Weather/load/driving-style default to neutral until a conditions screen exists.)
+    private val vehicle get() = RangeEstimator.planningVehicle(
+        from = selectedPreset.toVehicle(european = region.isEuropean),
+        currentBatteryPercent = currentSocPercent.toDouble(),
+        arrivalBufferPercent = arrivalBufferPercent.toDouble(),
+        weatherRangeLossPercent = 0.0,
+        extraLoadKg = 0.0,
+        drivingStyle = RangeDrivingStyle.BALANCED,
+        averageSpeedKph = null,
+    )
 
     var isPickingVehicle by mutableStateOf(false)
         private set

@@ -57,9 +57,14 @@ object RoutePlanner {
             val reserve = if (index == sequence.size - 1) arrivalBufferPercent else 10.0
             val requiredDeparture = nextKm * socPerKm + reserve
             if (requiredDeparture > 95) return null
-            val target = minOf(95.0, maxOf(arrival, maxOf(60.0, requiredDeparture)))
+            // Charge only as much as the next leg needs (no artificial floor) — matches iOS
+            // buildSegmentedRoute and this file's buildRouteThroughWaypoints.
+            val target = minOf(95.0, maxOf(arrival, requiredDeparture))
             val arrivalInt = arrival.roundToInt().coerceIn(0, 100)
             val targetInt = maxOf(arrivalInt, minOf(95, ceil(target).toInt()))
+            // A charger reached with enough charge to continue is not a real stop — drop the whole
+            // candidate rather than emit a phantom zero-charge stop (iOS guards the same way).
+            if (targetInt <= arrivalInt) return null
             val compatibleKw = charger.compatiblePower(vehicle.connectorTypes) ?: return null
             val effectiveKw = maxOf(1.0, minOf(compatibleKw.toDouble(), vehicle.maxDcChargingKw.toDouble()))
             val minutes = ChargePlanner.chargeMinutes(arrivalInt, targetInt, capacity, effectiveKw)

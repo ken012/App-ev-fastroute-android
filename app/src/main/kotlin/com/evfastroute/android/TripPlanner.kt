@@ -4,6 +4,7 @@ import com.evfastroute.android.net.OcmClient
 import com.evfastroute.android.net.OrsClient
 import com.evfastroute.core.Charger
 import com.evfastroute.core.ChargerScoring
+import com.evfastroute.core.ChargerStatus
 import com.evfastroute.core.ChargerSequenceSelector
 import com.evfastroute.core.Corridor
 import com.evfastroute.core.EnergyModel
@@ -56,7 +57,7 @@ class TripPlanner {
             return Result.Error("No live charging stations were found along this route (is the OCM key set?).")
         }
 
-        val projected = chargers.mapNotNull { charger ->
+        val projected = chargers.filter { usableCharger(it, vehicle) }.mapNotNull { charger ->
             val projection = Corridor.project(charger.latitude, charger.longitude, direct.geometry) ?: return@mapNotNull null
             if (projection.corridorKm > 40) null
             else ProjectedCharger(charger, projection.progressKm, projection.corridorKm)
@@ -148,6 +149,12 @@ class TripPlanner {
 
     private fun round5(value: Double): Long = Math.round(value * 100_000.0)
 
+    // Mirrors iOS findRoutes' pre-selection filter: only consider chargers that are not offline and
+    // have at least one connector this vehicle can use. Excluding them BEFORE projection/beam-search
+    // stops offline stops being presented and stops incompatible stops crowding out a valid plan.
+    private fun usableCharger(charger: Charger, vehicle: Vehicle): Boolean =
+        charger.status != ChargerStatus.OFFLINE && charger.compatiblePower(vehicle.connectorTypes) != null
+
     private fun preference(objective: RouteObjective, vehicle: Vehicle): (Charger) -> Double = when (objective) {
         RouteObjective.FASTEST -> { charger -> ChargerScoring.speedScore(charger, vehicle, emptySet()) }
         RouteObjective.RELIABLE -> { charger -> charger.reliabilityScore }
@@ -227,7 +234,7 @@ class TripPlanner {
         if (chargers.isEmpty()) {
             return Result.Error("No live charging stations were found along this route (is the OCM key set?).")
         }
-        val projected = chargers.mapNotNull { charger ->
+        val projected = chargers.filter { usableCharger(it, vehicle) }.mapNotNull { charger ->
             val projection = Corridor.project(charger.latitude, charger.longitude, combinedGeometry) ?: return@mapNotNull null
             if (projection.corridorKm > 40) null else ProjectedCharger(charger, projection.progressKm, projection.corridorKm)
         }

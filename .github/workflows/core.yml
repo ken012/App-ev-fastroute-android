@@ -61,11 +61,27 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "Firebase secrets not set — skipping distribution."
           fi
-      - name: Download APK
+      - uses: actions/checkout@v4
         if: steps.guard.outputs.configured == 'true'
-        uses: actions/download-artifact@v4
+      - uses: actions/setup-java@v5
+        if: steps.guard.outputs.configured == 'true'
         with:
-          name: app-debug-apk
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.guard.outputs.configured == 'true'
+        with:
+          gradle-version: '8.10.2'
+      # Build a KEYED APK here (not the public keyless app-debug-apk artifact) so testers get working
+      # routing. Keys come from repo secrets and are baked only into this build, which goes straight
+      # to Firebase — they are never uploaded as a public artifact. If the key secrets are unset the
+      # build is keyless (routing inactive) but still distributes.
+      - name: Build keyed APK for testers
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          ORS_API_KEY: ${{ secrets.ORS_API_KEY }}
+          OCM_API_KEY: ${{ secrets.OCM_API_KEY }}
+        run: gradle :app:assembleDebug --no-daemon --console=plain -PORS_API_KEY="$ORS_API_KEY" -POCM_API_KEY="$OCM_API_KEY"
       - name: Write service account
         if: steps.guard.outputs.configured == 'true'
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
@@ -75,7 +91,7 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
         run: |
           npm install -g firebase-tools
-          firebase appdistribution:distribute app-debug.apk \
+          firebase appdistribution:distribute app/build/outputs/apk/debug/app-debug.apk \
             --app "$FIREBASE_APP_ID" \
             --groups testers \
             --release-notes "Automated build from $GITHUB_SHA"
