@@ -12,10 +12,13 @@ import com.evfastroute.core.EvCatalog
 import com.evfastroute.core.EvPreset
 import com.evfastroute.core.LatLon
 import com.evfastroute.core.NavigationApp
+import com.evfastroute.core.NavigationPoint
+import com.evfastroute.core.NavigationSession
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.PlaceRanker
 import com.evfastroute.core.Region
 import com.evfastroute.core.RouteOption
+import com.evfastroute.core.orderedNavigationPoints
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -41,6 +44,10 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     var preferredNav by mutableStateOf(settings.preferredNav)
         private set
     var isEditingSettings by mutableStateOf(false)
+        private set
+
+    // An in-progress sequential handoff (multi-stop), restored across launches.
+    var navSession by mutableStateOf(settings.navigationSession)
         private set
 
     // The chosen car. Starts at a sensible default; the user can pick any catalog vehicle. The
@@ -177,6 +184,35 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePreferredNav(value: NavigationApp) {
         preferredNav = value
         settings.preferredNav = value
+    }
+
+    // ---- Sequential guided handoff ----
+
+    /** Begins a per-stop guided handoff through the route's stops to the destination. */
+    fun startGuidedTrip(option: RouteOption, app: NavigationApp) {
+        val dest = destination ?: return
+        val stops = option.orderedNavigationPoints()
+        val destinationPoint = NavigationPoint(dest.latitude, dest.longitude, dest.placeName, NavigationPoint.Kind.DESTINATION)
+        navSession = NavigationSession.create(stops, destinationPoint, app, System.currentTimeMillis())
+        settings.navigationSession = navSession
+    }
+
+    /** Records that the current point was just opened in the external app (starts the arrival clock). */
+    fun recordSessionHandoff() {
+        navSession = navSession?.recordHandoff(System.currentTimeMillis())
+        settings.navigationSession = navSession
+    }
+
+    /** Driver confirmed arrival at the current point; advance (and end when the destination is reached). */
+    fun advanceGuidedTrip() {
+        val advanced = navSession?.markCurrentPointComplete() ?: return
+        navSession = if (advanced.isComplete) null else advanced
+        settings.navigationSession = navSession
+    }
+
+    fun endGuidedTrip() {
+        navSession = null
+        settings.navigationSession = null
     }
 
     fun selectPreset(preset: EvPreset) {

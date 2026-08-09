@@ -54,7 +54,8 @@ platform-native but must match feature-for-feature.
 | Multi-stop UI (add/edit/reorder/remove stops + map pins) | Compose WaypointRow + RouteMap | ✅ v1 |
 | Arrival timeline (per-stop clock time + battery, depart→arrive) | Compose ArrivalTimeline | ✅ v1 |
 | Live traffic overlay | (limited on free stack) | ⬜ |
-| Sequential nav handoff (persistent session, per-stop advance) | Android intents | ⬜ (basic handoff done; session pending) |
+| Sequential-handoff session state machine (progress + arrival prompt) | `NavigationSession` (:core) | `NavigationSessionTest` | ✅ |
+| Sequential nav handoff (persistent session, per-stop advance) | Compose GuidedTripBanner + `SettingsStore` | ✅ v1 (manual confirm; GPS auto-prompt is the remaining sliver) |
 | Region + units model (currency/connectors/imperial/detect) | `Region.kt` + `Units` (:core) | `RegionTest` ✅ |
 | Settings (units, region, preferred nav) + persistence | Compose SettingsScreen + `SettingsStore` | ✅ v1 |
 | Tester distribution (installable APK + Firebase App Distribution) | CI artifact + guarded `distribute` job | ✅ v1 (see DISTRIBUTION.md) |

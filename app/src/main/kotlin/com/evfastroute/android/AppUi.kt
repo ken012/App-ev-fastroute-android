@@ -41,6 +41,7 @@ import com.evfastroute.core.LatLon
 import com.evfastroute.core.NavigationApp
 import com.evfastroute.core.NavigationLinks
 import com.evfastroute.core.NavigationPoint
+import com.evfastroute.core.NavigationSession
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.Region
 import com.evfastroute.core.RouteOption
@@ -74,6 +75,17 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
             ) {
                 Text("EV FastRoute", style = MaterialTheme.typography.headlineMedium)
                 TextButton(onClick = vm::showSettings) { Text("Settings") }
+            }
+        }
+
+        vm.navSession?.let { session ->
+            item {
+                GuidedTripBanner(
+                    session = session,
+                    onHandoffRecorded = vm::recordSessionHandoff,
+                    onArrived = vm::advanceGuidedTrip,
+                    onEnd = vm::endGuidedTrip,
+                )
             }
         }
 
@@ -155,7 +167,14 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                 )
             }
             vm.destination?.let { dest ->
-                item { DirectionsRow(option = selected, destination = dest, preferredNav = vm.preferredNav) }
+                item {
+                    DirectionsRow(
+                        option = selected,
+                        destination = dest,
+                        preferredNav = vm.preferredNav,
+                        onStartGuided = { vm.startGuidedTrip(selected, vm.preferredNav) },
+                    )
+                }
             }
             item {
                 ArrivalTimeline(
@@ -420,7 +439,12 @@ private fun RouteCard(option: RouteOption, selected: Boolean, currencySymbol: St
 }
 
 @Composable
-private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate, preferredNav: NavigationApp) {
+private fun DirectionsRow(
+    option: RouteOption,
+    destination: PlaceCandidate,
+    preferredNav: NavigationApp,
+    onStartGuided: () -> Unit,
+) {
     val context = LocalContext.current
     var note by remember(option, destination) { mutableStateOf<String?>(null) }
 
@@ -430,6 +454,7 @@ private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate, pref
     val destPoint = NavigationPoint(
         destination.latitude, destination.longitude, destination.placeName, NavigationPoint.Kind.DESTINATION,
     )
+    val hasStops = option.chargingStops.isNotEmpty() || option.userWaypoints.isNotEmpty()
 
     fun launch(app: NavigationApp) {
         val plan = NavigationLinks.handoff(app, origin = null, stops = stops, destination = destPoint)
@@ -455,8 +480,53 @@ private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate, pref
                 }
             }
         }
+        if (hasStops) {
+            OutlinedButton(onClick = onStartGuided, modifier = Modifier.fillMaxWidth()) {
+                Text("Start guided trip (stop by stop)")
+            }
+        }
         note?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun GuidedTripBanner(
+    session: NavigationSession,
+    onHandoffRecorded: () -> Unit,
+    onArrived: () -> Unit,
+    onEnd: () -> Unit,
+) {
+    val context = LocalContext.current
+    val point = session.currentPoint ?: return
+    val position = session.completedPointCount + 1
+    val isFinal = session.remainingPointCount <= 1
+
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "Guided trip · stop $position of ${session.totalPointCount}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text("Next: ${point.name}", style = MaterialTheme.typography.titleMedium)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        val plan = NavigationLinks.handoff(session.app, origin = null, stops = emptyList(), destination = point)
+                        if (plan != null && NavLauncher.open(context, plan.url)) onHandoffRecorded()
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("Open in ${session.app.displayName}") }
+                OutlinedButton(onClick = onArrived, modifier = Modifier.weight(1f)) {
+                    Text(if (isFinal) "Arrived" else "Arrived · next")
+                }
+            }
+            TextButton(onClick = onEnd) { Text("End guided trip") }
         }
     }
 }

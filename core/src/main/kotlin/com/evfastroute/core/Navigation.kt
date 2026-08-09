@@ -1,5 +1,7 @@
 package com.evfastroute.core
 
+import kotlinx.serialization.Serializable
+
 // Navigation handoff. EV FastRoute plans the trip and the charging stops; a dedicated navigator
 // (Google Maps, Waze, or the system default maps app) does the turn-by-turn — voice, live traffic,
 // lane guidance — that a map SDK doesn't expose. Faithful port of the iOS NavigationHandoff URL
@@ -7,6 +9,7 @@ package com.evfastroute.core
 // is pure and unit-tested so link behaviour is provably identical to iOS.
 
 /** Which external navigator to hand driving guidance to. */
+@Serializable
 enum class NavigationApp(val serialized: String, val displayName: String) {
     GOOGLE_MAPS("google", "Google Maps"),
     WAZE("waze", "Waze"),
@@ -19,12 +22,14 @@ enum class NavigationApp(val serialized: String, val displayName: String) {
 }
 
 /** A point handed to a navigator: a coordinate plus a display name. */
+@Serializable
 data class NavigationPoint(
     val latitude: Double,
     val longitude: Double,
     val name: String,
     val kind: Kind = Kind.VISIT,
 ) {
+    @Serializable
     enum class Kind { CHARGING, VISIT, DESTINATION }
 }
 
@@ -148,4 +153,108 @@ object NavigationLinks {
             }
         }
     }
+}
+
+/**
+ * Durable progress for a multi-stop handoff to navigators that accept only one destination per
+ * deep link (Waze, the default maps app, and oversized Google itineraries). The full itinerary
+ * stays in EV FastRoute; each point is handed off one at a time and the driver confirms arrival to
+ * advance. Faithful port of the iOS ExternalNavigationSession — immutable here (each transition
+ * returns a new value), with epoch-millis timestamps so the logic is pure and testable. It never
+ * auto-advances: [shouldSuggestArrival] only decides whether to *offer* a confirm prompt.
+ */
+@Serializable
+data class NavigationSession(
+    val itinerary: List<NavigationPoint>, // intermediate stops followed by the destination
+    val app: NavigationApp,
+    val startedAtMillis: Long,
+    val nextIndex: Int = 0,
+    val lastHandoffAtMillis: Long? = null,
+    val arrivalPromptedIndex: Int? = null,
+) {
+    val currentPoint: NavigationPoint? get() = itinerary.getOrNull(nextIndex)
+    val isComplete: Boolean get() = nextIndex >= itinerary.size
+    val completedPointCount: Int get() = minOf(nextIndex, itinerary.size)
+    val totalPointCount: Int get() = itinerary.size
+    val remainingPointCount: Int get() = maxOf(0, itinerary.size - nextIndex)
+
+    fun withApp(app: NavigationApp): NavigationSession = copy(app = app)
+
+    fun recordHandoff(atMillis: Long): NavigationSession =
+        copy(lastHandoffAtMillis = atMillis, arrivalPromptedIndex = null)
+
+    fun recordArrivalPrompt(): NavigationSession =
+        if (currentPoint == null) this else copy(arrivalPromptedIndex = nextIndex)
+
+    /** Advances to the next point after explicit driver confirmation. No-op once complete. */
+    fun markCurrentPointComplete(): NavigationSession =
+        if (currentPoint == null) this
+        else copy(nextIndex = nextIndex + 1, arrivalPromptedIndex = null, lastHandoffAtMillis = null)
+
+    /**
+     * Conservative proximity hint used only to *offer* a confirmation prompt — never to advance.
+     * Rejects stale/inaccurate samples and waits long enough after handoff to avoid prompting while
+     * the external app is still launching. Mirrors iOS shouldSuggestArrival.
+     */
+    fun shouldSuggestArrival(
+        userLatitude: Double,
+        userLongitude: Double,
+        horizontalAccuracyMeters: Double?,
+        sampleAtMillis: Long?,
+        nowMillis: Long,
+    ): Boolean {
+        val point = currentPoint ?: return false
+        if (arrivalPromptedIndex == nextIndex) return false
+        val handoff = lastHandoffAtMillis ?: return false
+        val sample = sampleAtMillis ?: return false
+        if (sample < handoff) return false
+        if (nowMillis - handoff < MIN_HANDOFF_DURATION_MILLIS) return false
+        val accuracy = horizontalAccuracyMeters ?: return false
+        if (accuracy < 0 || accuracy > MAX_ARRIVAL_ACCURACY_METERS) return false
+        val distance = Geometry.haversineMeters(userLatitude, userLongitude, point.latitude, point.longitude)
+        return distance <= ARRIVAL_RADIUS_METERS
+    }
+
+    companion object {
+        const val ARRIVAL_RADIUS_METERS = 200.0
+        const val MAX_ARRIVAL_ACCURACY_METERS = 100.0
+        const val MIN_HANDOFF_DURATION_MILLIS = 20_000L
+
+        /** Builds a session over the intermediate [stops] followed by [destination]. */
+        fun create(
+            stops: List<NavigationPoint>,
+            destination: NavigationPoint,
+            app: NavigationApp,
+            startedAtMillis: Long,
+        ): NavigationSession = NavigationSession(itinerary = stops + destination, app = app, startedAtMillis = startedAtMillis)
+    }
+}
+
+/**
+ * The intermediate stops (charging + the driver's own visits) in travel order, reconstructed from
+ * the route's segment indices — the input to a sequential [NavigationSession]. Mirrors iOS
+ * NavigationHandoff.orderedStops (waypoints then chargers, ordered by segment then insertion).
+ */
+fun RouteOption.orderedNavigationPoints(): List<NavigationPoint> {
+    data class Indexed(val segment: Int, val order: Int, val point: NavigationPoint)
+
+    val items = mutableListOf<Indexed>()
+    userWaypoints.forEachIndexed { i, wp ->
+        items.add(
+            Indexed(
+                userWaypointSegmentIndices.getOrNull(i) ?: Int.MAX_VALUE, i,
+                NavigationPoint(wp.latitude, wp.longitude, wp.placeName, NavigationPoint.Kind.VISIT),
+            ),
+        )
+    }
+    val offset = userWaypoints.size
+    chargingStops.forEachIndexed { i, stop ->
+        items.add(
+            Indexed(
+                stopSegmentIndices.getOrNull(i) ?: Int.MAX_VALUE, offset + i,
+                NavigationPoint(stop.latitude, stop.longitude, stop.name, NavigationPoint.Kind.CHARGING),
+            ),
+        )
+    }
+    return items.sortedWith(compareBy({ it.segment }, { it.order })).map { it.point }
 }
