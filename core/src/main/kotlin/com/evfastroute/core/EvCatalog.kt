@@ -66,8 +66,9 @@ data class EvPreset(
 
 object EvCatalog {
 
-    /** All built-in presets, de-duplicated by identifier and sorted make → model → newest year. */
-    val presets: List<EvPreset> = deduplicatedAndSorted(fallbackPresets + manufacturerSupplements)
+    /** All built-in presets, de-duplicated by identifier and sorted make → model → newest year.
+     * `lazy` so the preset lists (declared below) are initialized before this reads them. */
+    val presets: List<EvPreset> by lazy { deduplicatedAndSorted(fallbackPresets + manufacturerSupplements) }
 
     /** Distinct manufacturer count — used by the picker header ("N makes"). */
     val makeCount: Int get() = presets.map { it.make }.toSet().size

@@ -15,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -26,13 +27,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.evfastroute.android.map.RouteMap
+import com.evfastroute.android.nav.NavLauncher
 import com.evfastroute.core.EvCatalog
 import com.evfastroute.core.EvPreset
 import com.evfastroute.core.LatLon
+import com.evfastroute.core.NavigationApp
+import com.evfastroute.core.NavigationLinks
+import com.evfastroute.core.NavigationPoint
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.RouteOption
 
@@ -111,6 +117,9 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                     destination = vm.destination?.let { LatLon(it.latitude, it.longitude) },
                     modifier = Modifier.fillMaxWidth().height(240.dp),
                 )
+            }
+            vm.destination?.let { dest ->
+                item { DirectionsRow(option = selected, destination = dest) }
             }
         }
 
@@ -203,6 +212,41 @@ private fun RouteCard(option: RouteOption, selected: Boolean, onClick: () -> Uni
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate) {
+    val context = LocalContext.current
+    var note by remember(option, destination) { mutableStateOf<String?>(null) }
+
+    val stops = option.chargingStops.map {
+        NavigationPoint(it.latitude, it.longitude, it.name, NavigationPoint.Kind.CHARGING)
+    }
+    val destPoint = NavigationPoint(
+        destination.latitude, destination.longitude, destination.placeName, NavigationPoint.Kind.DESTINATION,
+    )
+
+    fun launch(app: NavigationApp) {
+        val plan = NavigationLinks.handoff(app, origin = null, stops = stops, destination = destPoint)
+        if (plan == null) { note = "Couldn't build a ${app.displayName} link."; return }
+        val opened = NavLauncher.open(context, plan.url)
+        note = if (!opened) "No app on this device could open ${app.displayName}." else plan.note
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Directions", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(onClick = { launch(NavigationApp.GOOGLE_MAPS) }, modifier = Modifier.weight(1f)) { Text("Google") }
+            OutlinedButton(onClick = { launch(NavigationApp.WAZE) }, modifier = Modifier.weight(1f)) { Text("Waze") }
+            OutlinedButton(onClick = { launch(NavigationApp.DEFAULT) }, modifier = Modifier.weight(1f)) { Text("Default") }
+        }
+        note?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

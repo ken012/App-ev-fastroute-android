@@ -46,9 +46,11 @@ platform-native but must match feature-for-feature.
 | Planner (start/dest search + battery/buffer + Find Route) | Compose PlannerApp | ✅ v1 |
 | Route options list (title/ETA/stops/cost/itinerary) | Compose RouteCard | ✅ v1 |
 | Vehicle picker + catalog (search, pick, region connectors) | Compose VehiclePicker + `EvCatalog` | ✅ v1 |
+| Nav handoff URL builders (Google/Waze/geo, waypoint cap, notes) | `Navigation.kt` (:core) | `NavigationLinksTest` ✅ |
+| Nav handoff launch (ACTION_VIEW intent) + Directions buttons | `:app` NavLauncher + DirectionsRow | ✅ v1 |
 | Arrival timeline | Compose | ⬜ |
 | Live traffic overlay | (limited on free stack) | ⬜ |
-| Sequential nav handoff (Google/Waze/geo) | Android intents | ⬜ |
+| Sequential nav handoff (persistent session, per-stop advance) | Android intents | ⬜ (basic handoff done; session pending) |
 | Settings (units, region, preferred nav, etc.) | Compose | ⬜ |
 
 ## Verification
