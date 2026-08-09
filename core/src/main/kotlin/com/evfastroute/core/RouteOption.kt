@@ -42,4 +42,11 @@ data class RouteOption(
     val geometry: List<LatLon> = emptyList(),
     val estimatedChargingCostValue: Double? = null,
     val estimatedCostText: String? = null,
+    /** Drive-segment index at whose end each charging stop is reached. Aligned to [chargingStops].
+     * Because user waypoints add extra segments, these are the interleaved positions, not 0..n. */
+    val stopSegmentIndices: List<Int> = emptyList(),
+    /** The driver's own intermediate stops, in order (multi-stop trips); empty for a simple route. */
+    val userWaypoints: List<PlaceCandidate> = emptyList(),
+    /** Drive-segment index at whose end each user waypoint is reached. Aligned to [userWaypoints]. */
+    val userWaypointSegmentIndices: List<Int> = emptyList(),
 )

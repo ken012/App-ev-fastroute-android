@@ -9,6 +9,14 @@ import kotlin.math.roundToInt
 // per objective and merges duplicates. Network I/O lives in the :app service clients; this stays
 // pure and test-verified against the iOS behavior.
 
+/** One point the trip drives through, in travel order: either a charging stop (charger != null) or
+ * one of the driver's own waypoints (userWaypointIndex != null). Mirrors the iOS `Via`. */
+data class PlannedVia(
+    val charger: Charger?,
+    val userWaypointIndex: Int?,
+    val name: String,
+)
+
 object RoutePlanner {
 
     /**
@@ -96,6 +104,127 @@ object RoutePlanner {
             itinerary = itinerary,
             geometry = legGeometries.flatten(),
             estimatedChargingCostValue = if (sequence.isNotEmpty()) totalCost else null,
+            stopSegmentIndices = sequence.indices.toList(),
+        )
+    }
+
+    /**
+     * Builds one multi-stop route that drives THROUGH the driver's own waypoints, inserting charging
+     * only where the whole trip needs it. [vias] is the full travel-ordered list of intermediate
+     * points (user waypoints and chargers interleaved by position); [legDistancesKm] /
+     * [legDurationMinutes] describe start→via0, via0→via1, …, viaN→destination (size = vias.size + 1).
+     * User vias are driven through with no charge; charger vias top up enough to reach the next
+     * charger (10% reserve) or the destination (arrival-buffer reserve). Returns null if any leg is
+     * energy-infeasible. Faithful port of iOS `buildRouteThroughWaypoints`.
+     */
+    fun buildRouteThroughWaypoints(
+        id: String,
+        vias: List<PlannedVia>,
+        userWaypoints: List<PlaceCandidate>,
+        legDistancesKm: List<Double>,
+        legDurationMinutes: List<Int>,
+        directMinutes: Int,
+        vehicle: Vehicle,
+        currentSOC: Double,
+        arrivalBufferPercent: Double,
+        legGeometries: List<List<LatLon>> = emptyList(),
+    ): RouteOption? {
+        if (legDistancesKm.size != vias.size + 1 || legDurationMinutes.size != vias.size + 1) return null
+        val capacity = maxOf(1.0, vehicle.batteryCapacityKwh)
+        val socPerKm = vehicle.efficiencyKwhPerKm / capacity * 100
+
+        var soc = currentSOC
+        val stops = mutableListOf<ChargingStop>()
+        val stopSegmentIndices = mutableListOf<Int>()
+        val userWaypointSegmentIndices = IntArray(userWaypoints.size) { -1 }
+        val itinerary = mutableListOf<ItineraryStop>()
+        var elapsedMinutes = 0
+        var chargingMinutes = 0
+        var totalCost = 0.0
+        var reliabilitySum = 0.0
+        var chargerCount = 0
+
+        for (i in vias.indices) {
+            val arrival = soc - legDistancesKm[i] * socPerKm
+            if (arrival < 5) return null
+            val via = vias[i]
+            via.userWaypointIndex?.let { if (it in userWaypointSegmentIndices.indices) userWaypointSegmentIndices[it] = i }
+
+            val charger = via.charger
+            if (charger == null) {
+                // User stop: drive through, record the visit, no charge.
+                elapsedMinutes += legDurationMinutes[i]
+                itinerary.add(
+                    ItineraryStop(via.name, ItineraryStop.Kind.VISIT, elapsedMinutes, arrival.roundToInt().coerceIn(0, 100)),
+                )
+                soc = arrival
+                continue
+            }
+
+            // Distance from here to the NEXT charger (spanning any user stops between), else destination.
+            var requiredKm = 0.0
+            var reachedNextCharger = false
+            var k = i + 1
+            while (k <= vias.size) {
+                requiredKm += legDistancesKm[k]
+                if (k < vias.size && vias[k].charger != null) { reachedNextCharger = true; break }
+                k++
+            }
+            val reserve = if (reachedNextCharger) 10.0 else arrivalBufferPercent
+            val requiredDeparture = requiredKm * socPerKm + reserve
+            if (requiredDeparture > 95) return null
+            val target = minOf(95.0, maxOf(arrival, requiredDeparture))
+            val arrivalInt = arrival.roundToInt().coerceIn(0, 100)
+            val targetInt = maxOf(arrivalInt, minOf(95, ceil(target).toInt()))
+            if (targetInt <= arrivalInt) return null
+            val compatibleKw = charger.compatiblePower(vehicle.connectorTypes) ?: return null
+            val effectiveKw = maxOf(1.0, minOf(compatibleKw.toDouble(), vehicle.maxDcChargingKw.toDouble()))
+            val minutes = ChargePlanner.chargeMinutes(arrivalInt, targetInt, capacity, effectiveKw)
+
+            elapsedMinutes += legDurationMinutes[i]
+            itinerary.add(ItineraryStop(charger.name, ItineraryStop.Kind.CHARGING, elapsedMinutes, arrivalInt))
+            elapsedMinutes += minutes
+            chargingMinutes += minutes
+            totalCost += ChargePlanner.energyAdded(arrivalInt, targetInt, capacity) * charger.pricePerKwh
+            reliabilitySum += charger.reliabilityScore
+            chargerCount++
+            stops.add(
+                ChargingStop(
+                    chargerId = charger.id, name = charger.name,
+                    latitude = charger.latitude, longitude = charger.longitude,
+                    arrivalBatteryPercent = arrivalInt, targetBatteryPercent = targetInt,
+                    chargeDurationMinutes = minutes,
+                ),
+            )
+            stopSegmentIndices.add(i)
+            soc = targetInt.toDouble()
+        }
+
+        val finalArrival = (soc - legDistancesKm.last() * socPerKm).roundToInt().coerceIn(0, 100)
+        if (finalArrival < arrivalBufferPercent) return null
+        val drivingMinutes = legDurationMinutes.sum()
+        val detourMinutes = maxOf(0, drivingMinutes - directMinutes)
+        val averageReliability = if (chargerCount > 0) reliabilitySum / chargerCount else 100.0
+
+        return RouteOption(
+            id = id,
+            objective = RouteObjective.VERIFIED,
+            supportedObjectives = emptySet(),
+            title = "Candidate route",
+            mode = "Candidate",
+            totalEtaMinutes = drivingMinutes + chargingMinutes,
+            drivingMinutes = drivingMinutes,
+            chargingMinutes = chargingMinutes,
+            detourMinutes = detourMinutes,
+            arrivalBatteryPercent = finalArrival,
+            riskScore = maxOf(1.0, (100 - averageReliability).roundToInt().toDouble()),
+            chargingStops = stops,
+            itinerary = itinerary,
+            geometry = legGeometries.flatten(),
+            estimatedChargingCostValue = if (chargerCount > 0) totalCost else null,
+            stopSegmentIndices = stopSegmentIndices,
+            userWaypoints = userWaypoints,
+            userWaypointSegmentIndices = userWaypointSegmentIndices.toList(),
         )
     }
 

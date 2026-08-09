@@ -7,13 +7,17 @@ import com.evfastroute.core.ChargerScoring
 import com.evfastroute.core.ChargerSequenceSelector
 import com.evfastroute.core.Corridor
 import com.evfastroute.core.EnergyModel
+import com.evfastroute.core.ItineraryStop
 import com.evfastroute.core.LatLon
+import com.evfastroute.core.PlaceCandidate
+import com.evfastroute.core.PlannedVia
 import com.evfastroute.core.ProjectedCharger
 import com.evfastroute.core.RouteLeg
 import com.evfastroute.core.RouteObjective
 import com.evfastroute.core.RouteOption
 import com.evfastroute.core.RoutePlanner
 import com.evfastroute.core.Vehicle
+import kotlin.math.roundToInt
 
 // Live trip planning over OpenRouteService + Open Charge Map, mirroring the iOS
 // RouteOptimizationService.findRoutes pipeline: direct route → energy check → chargers along the
@@ -148,6 +152,202 @@ class TripPlanner {
         itinerary = emptyList(),
         geometry = geometry,
     )
+
+    /**
+     * Plans a trip that drives THROUGH the driver's own ordered [waypoints], optimizing charging
+     * globally across the whole multi-leg corridor (chargers inserted only where the trip needs
+     * them, spanning the visits). Mirrors the iOS through-waypoints path. Falls back to [plan] when
+     * there are no interior stops.
+     */
+    suspend fun planThrough(
+        start: LatLon,
+        waypoints: List<PlaceCandidate>,
+        destination: LatLon,
+        vehicle: Vehicle,
+        currentSOC: Double,
+        arrivalBufferPercent: Double,
+    ): Result {
+        if (waypoints.isEmpty()) return plan(start, destination, vehicle, currentSOC, arrivalBufferPercent)
+
+        val points = listOf(start) + waypoints.map { LatLon(it.latitude, it.longitude) } + listOf(destination)
+        val legRoutes = mutableListOf<RouteLeg>()
+        for (i in 0 until points.size - 1) {
+            val leg = OrsClient.route(points[i].latitude, points[i].longitude, points[i + 1].latitude, points[i + 1].longitude)
+                ?: return Result.Error("Couldn't calculate a driving route through your stops. Check the addresses and your connection.")
+            legRoutes.add(leg)
+        }
+
+        val combinedGeometry = legRoutes.flatMap { it.geometry }
+        val legStartProgressKm = mutableListOf<Double>()
+        var cumulative = 0.0
+        for (leg in legRoutes) { legStartProgressKm.add(cumulative); cumulative += leg.distanceKm }
+        val totalDistanceKm = cumulative
+        val directMinutes = legRoutes.sumOf { it.durationMinutes }
+        // Each user waypoint sits at a leg boundary: waypoint k is the arrival of leg k.
+        val waypointProgress = waypoints.indices.map { legStartProgressKm[it + 1] }
+
+        val energy = EnergyModel.energyPlan(
+            distanceKm = totalDistanceKm, capacityKwh = vehicle.batteryCapacityKwh,
+            efficiencyKwhPerKm = vehicle.efficiencyKwhPerKm, currentBatteryPercent = currentSOC,
+            arrivalBufferPercent = arrivalBufferPercent,
+        )
+        if (!energy.needsCharge) {
+            return Result.Success(
+                listOf(
+                    directThroughOption(
+                        directMinutes, legRoutes, waypoints, waypointProgress, totalDistanceKm,
+                        vehicle, currentSOC, combinedGeometry,
+                    ),
+                ),
+            )
+        }
+
+        val box = boundingBox(combinedGeometry) ?: return Result.Error("No route geometry was returned.")
+        val chargers = OcmClient.chargers(box.minLat, box.minLon, box.maxLat, box.maxLon)
+        if (chargers.isEmpty()) {
+            return Result.Error("No live charging stations were found along this route (is the OCM key set?).")
+        }
+        val projected = chargers.mapNotNull { charger ->
+            val projection = Corridor.project(charger.latitude, charger.longitude, combinedGeometry) ?: return@mapNotNull null
+            if (projection.corridorKm > 40) null else ProjectedCharger(charger, projection.progressKm, projection.corridorKm)
+        }
+        if (projected.isEmpty()) {
+            return Result.Error("No compatible stations were close enough to the road corridor.")
+        }
+        val progressById = projected.associate { it.charger.id to it.progressKm }
+
+        val seen = mutableSetOf<String>()
+        val candidates = mutableListOf<RouteOption>()
+        for (objective in RouteObjective.plannerCases) {
+            val prefer = preference(objective, vehicle)
+            val sequences = ChargerSequenceSelector.selectChargerSequences(
+                projected = projected,
+                totalDistanceKm = totalDistanceKm,
+                vehicle = vehicle,
+                currentSOC = currentSOC,
+                arrivalBufferPercent = arrivalBufferPercent,
+                prefer = prefer,
+                objective = objective,
+                maxSequences = if (objective == RouteObjective.FEWEST_STOPS) 16 else 10,
+            )
+            val quota = if (objective == RouteObjective.FEWEST_STOPS) 4 else 2
+            for (sequence in sequences.take(quota)) {
+                val key = ChargerScoring.sequenceKey(sequence.map { it.id })
+                if (!seen.add(key)) continue
+                val built = buildThroughSequence(
+                    key, sequence, start, destination, waypoints, waypointProgress, progressById,
+                    directMinutes, vehicle, currentSOC, arrivalBufferPercent,
+                )
+                if (built != null) candidates.add(built)
+            }
+        }
+
+        val options = RoutePlanner.optimize(candidates)
+        return if (options.isEmpty()) {
+            Result.Error("No safe charging plan spans this route. Try a lower minimum charger speed or more starting charge.")
+        } else {
+            Result.Success(options)
+        }
+    }
+
+    private suspend fun buildThroughSequence(
+        id: String,
+        sequence: List<Charger>,
+        start: LatLon,
+        destination: LatLon,
+        waypoints: List<PlaceCandidate>,
+        waypointProgress: List<Double>,
+        progressById: Map<String, Double>,
+        directMinutes: Int,
+        vehicle: Vehicle,
+        currentSOC: Double,
+        arrivalBufferPercent: Double,
+    ): RouteOption? {
+        data class OrderedVia(val via: PlannedVia, val progressKm: Double, val point: LatLon)
+
+        val vias = mutableListOf<OrderedVia>()
+        waypoints.forEachIndexed { index, wp ->
+            vias.add(
+                OrderedVia(
+                    PlannedVia(charger = null, userWaypointIndex = index, name = wp.placeName),
+                    waypointProgress[index], LatLon(wp.latitude, wp.longitude),
+                ),
+            )
+        }
+        sequence.forEach { charger ->
+            vias.add(
+                OrderedVia(
+                    PlannedVia(charger = charger, userWaypointIndex = null, name = charger.name),
+                    progressById[charger.id] ?: 0.0, LatLon(charger.latitude, charger.longitude),
+                ),
+            )
+        }
+        // Deterministic order: by corridor progress; at a tie, the driver's own stop first, then name.
+        val ordered = vias.sortedWith(
+            compareBy({ it.progressKm }, { if (it.via.userWaypointIndex != null) 0 else 1 }, { it.via.name }),
+        )
+        val orderedPoints = listOf(start) + ordered.map { it.point } + listOf(destination)
+        val legs = mutableListOf<RouteLeg>()
+        for (i in 0 until orderedPoints.size - 1) {
+            val leg = OrsClient.route(
+                orderedPoints[i].latitude, orderedPoints[i].longitude,
+                orderedPoints[i + 1].latitude, orderedPoints[i + 1].longitude,
+            ) ?: return null
+            legs.add(leg)
+        }
+        return RoutePlanner.buildRouteThroughWaypoints(
+            id = id,
+            vias = ordered.map { it.via },
+            userWaypoints = waypoints,
+            legDistancesKm = legs.map { it.distanceKm },
+            legDurationMinutes = legs.map { it.durationMinutes },
+            directMinutes = directMinutes,
+            vehicle = vehicle,
+            currentSOC = currentSOC,
+            arrivalBufferPercent = arrivalBufferPercent,
+            legGeometries = legs.map { it.geometry },
+        )
+    }
+
+    private fun directThroughOption(
+        directMinutes: Int,
+        legRoutes: List<RouteLeg>,
+        waypoints: List<PlaceCandidate>,
+        waypointProgress: List<Double>,
+        totalDistanceKm: Double,
+        vehicle: Vehicle,
+        currentSOC: Double,
+        geometry: List<LatLon>,
+    ): RouteOption {
+        val capacity = maxOf(1.0, vehicle.batteryCapacityKwh)
+        val socPerKm = vehicle.efficiencyKwhPerKm / capacity * 100
+        val itinerary = mutableListOf<ItineraryStop>()
+        var elapsed = 0
+        waypoints.forEachIndexed { k, wp ->
+            elapsed += legRoutes[k].durationMinutes
+            val batt = (currentSOC - waypointProgress[k] * socPerKm).roundToInt().coerceIn(0, 100)
+            itinerary.add(ItineraryStop(wp.placeName, ItineraryStop.Kind.VISIT, elapsed, batt))
+        }
+        val arrivalPct = (currentSOC - totalDistanceKm * socPerKm).roundToInt().coerceIn(0, 100)
+        return RouteOption(
+            id = "direct",
+            objective = RouteObjective.DIRECT,
+            supportedObjectives = setOf(RouteObjective.DIRECT),
+            title = RouteObjective.DIRECT.title,
+            mode = RouteObjective.DIRECT.mode,
+            totalEtaMinutes = directMinutes,
+            drivingMinutes = directMinutes,
+            chargingMinutes = 0,
+            detourMinutes = 0,
+            arrivalBatteryPercent = arrivalPct,
+            riskScore = 1.0,
+            chargingStops = emptyList(),
+            itinerary = itinerary,
+            geometry = geometry,
+            userWaypoints = waypoints,
+            userWaypointSegmentIndices = waypoints.indices.toList(),
+        )
+    }
 
     private data class Box(val minLat: Double, val minLon: Double, val maxLat: Double, val maxLon: Double)
 
