@@ -54,7 +54,7 @@ object OpenChargeMap {
     fun parse(responseBody: String): List<Charger> =
         json.decodeFromString<List<OcmPoi>>(responseBody).mapNotNull { charger(it) }
 
-    fun charger(poi: OcmPoi): Charger? {
+    private fun charger(poi: OcmPoi): Charger? {
         val address = poi.AddressInfo ?: return null
         val lat = address.Latitude ?: return null
         val lon = address.Longitude ?: return null
