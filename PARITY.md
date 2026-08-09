@@ -20,9 +20,9 @@ platform-native but must match feature-for-feature.
 |---|---|---|---|
 | `ChargePlan.swift` (ChargePlanner) | `ChargePlanner.kt` | `ChargePlannerTest` | ✅ done |
 | haversine (NavigationTracker) | `Geometry.kt` | `GeometryTest` | ✅ done |
-| `RouteOptimizationService` energyPlan | `EnergyPlan.kt` | — | ⬜ next |
-| `RouteObjective.swift` | `RouteObjective.kt` | — | ⬜ next |
-| Charger projection / corridor | `Corridor.kt` | — | ⬜ |
+| `RouteOptimizationService` energyPlan | `EnergyModel.kt` | `EnergyModelTest` | ✅ done |
+| `RouteObjective.swift` | `RouteObjective.kt` | `RouteObjectiveTest` | ✅ done |
+| Charger projection / corridor | `Corridor.kt` | — | ⬜ next |
 | Multi-objective selection + SOC-band taper feasibility | `RoutePlanner.kt` | — | ⬜ |
 | `RangeEstimator.swift` | `RangeEstimator.kt` | — | ⬜ |
 | `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | — | ⬜ |
