@@ -26,7 +26,9 @@ platform-native but must match feature-for-feature.
 | Planner models (Charger/Vehicle/ConnectorType/ProjectedCharger) | `Models.kt` | `ChargerScoringTest` | ✅ done |
 | Charger scoring (speedScore/networkMatches/sequenceKey) | `ChargerScoring.kt` | `ChargerScoringTest` | ✅ done |
 | Beam-search sequence selection (objective-aware) | `ChargerSequenceSelector.kt` | `ChargerSequenceSelectorTest` | ✅ done |
-| Build/optimize pipeline (verify legs, dedup-merge, comparator) | `:app` (needs routing I/O) | — | ⬜ next |
+| Build route from sequence+leg data (SOC walk → RouteOption) | `RoutePlanner.buildRoute` | `RoutePlannerTest` | ✅ done |
+| Optimize: best-per-objective + dedup-merge + comparator | `RoutePlanner.optimize` | `RoutePlannerTest` | ✅ done |
+| Route fetch/leg orchestration (network I/O) | `:app` service clients | — | ⬜ next |
 | `RangeEstimator.swift` | `RangeEstimator.kt` | `RangeEstimatorTest` | ✅ done |
 | `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | `PlaceRankerTest` | ✅ done |
 

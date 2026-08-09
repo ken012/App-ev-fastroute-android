@@ -1,0 +1,164 @@
+package com.evfastroute.core
+
+import kotlin.math.ceil
+import kotlin.math.roundToInt
+
+// Pure routing orchestration. Given a charger sequence and the per-leg distances/durations that
+// the routing service (OpenRouteService on Android, MKDirections on iOS) returns, it walks the
+// state-of-charge to build a RouteOption; and given several built candidates it selects the best
+// per objective and merges duplicates. Network I/O lives in the :app service clients; this stays
+// pure and test-verified against the iOS behavior.
+
+object RoutePlanner {
+
+    /**
+     * Builds one route from an ordered charger sequence. `legDistancesKm`/`legDurationMinutes`
+     * describe start→c0, c0→c1, …, cN→destination (size = sequence.size + 1). Returns null if the
+     * sequence is not energy-feasible. The objective is assigned later by [optimize].
+     */
+    fun buildRoute(
+        id: String,
+        sequence: List<Charger>,
+        legDistancesKm: List<Double>,
+        legDurationMinutes: List<Int>,
+        directMinutes: Int,
+        vehicle: Vehicle,
+        currentSOC: Double,
+        arrivalBufferPercent: Double,
+    ): RouteOption? {
+        if (legDistancesKm.size != sequence.size + 1 || legDurationMinutes.size != sequence.size + 1) return null
+        val capacity = maxOf(1.0, vehicle.batteryCapacityKwh)
+        val socPerKm = vehicle.efficiencyKwhPerKm / capacity * 100
+
+        var soc = currentSOC
+        val stops = mutableListOf<ChargingStop>()
+        val itinerary = mutableListOf<ItineraryStop>()
+        var elapsedMinutes = 0
+        var chargingMinutes = 0
+        var totalCost = 0.0
+        var reliabilitySum = 0.0
+
+        for (index in sequence.indices) {
+            val charger = sequence[index]
+            val arrival = soc - legDistancesKm[index] * socPerKm
+            if (arrival < 5) return null
+            elapsedMinutes += legDurationMinutes[index]
+
+            val nextKm = legDistancesKm[index + 1]
+            val reserve = if (index == sequence.size - 1) arrivalBufferPercent else 10.0
+            val requiredDeparture = nextKm * socPerKm + reserve
+            if (requiredDeparture > 95) return null
+            val target = minOf(95.0, maxOf(arrival, maxOf(60.0, requiredDeparture)))
+            val arrivalInt = arrival.roundToInt().coerceIn(0, 100)
+            val targetInt = maxOf(arrivalInt, minOf(95, ceil(target).toInt()))
+            val compatibleKw = charger.compatiblePower(vehicle.connectorTypes) ?: return null
+            val effectiveKw = maxOf(1.0, minOf(compatibleKw.toDouble(), vehicle.maxDcChargingKw.toDouble()))
+            val minutes = ChargePlanner.chargeMinutes(arrivalInt, targetInt, capacity, effectiveKw)
+
+            itinerary.add(
+                ItineraryStop(charger.name, ItineraryStop.Kind.CHARGING, elapsedMinutes, arrivalInt),
+            )
+            elapsedMinutes += minutes
+            chargingMinutes += minutes
+            totalCost += ChargePlanner.energyAdded(arrivalInt, targetInt, capacity) * charger.pricePerKwh
+            reliabilitySum += charger.reliabilityScore
+            stops.add(ChargingStop(charger.id, arrivalInt, targetInt, minutes))
+            soc = targetInt.toDouble()
+        }
+
+        val finalArrival = (soc - legDistancesKm.last() * socPerKm).roundToInt().coerceIn(0, 100)
+        if (finalArrival < arrivalBufferPercent) return null
+        val drivingMinutes = legDurationMinutes.sum()
+        val detourMinutes = maxOf(0, drivingMinutes - directMinutes)
+        val averageReliability = if (sequence.isNotEmpty()) reliabilitySum / sequence.size else 100.0
+
+        return RouteOption(
+            id = id,
+            objective = RouteObjective.VERIFIED,
+            supportedObjectives = emptySet(),
+            title = "Candidate route",
+            mode = "Candidate",
+            totalEtaMinutes = drivingMinutes + chargingMinutes,
+            drivingMinutes = drivingMinutes,
+            chargingMinutes = chargingMinutes,
+            detourMinutes = detourMinutes,
+            arrivalBatteryPercent = finalArrival,
+            riskScore = maxOf(1.0, (100 - averageReliability).roundToInt().toDouble()),
+            chargingStops = stops,
+            itinerary = itinerary,
+            estimatedChargingCostValue = if (sequence.isNotEmpty()) totalCost else null,
+        )
+    }
+
+    /** Picks the best candidate per user objective and merges options that share a charger sequence. */
+    fun optimize(candidates: List<RouteOption>): List<RouteOption> {
+        val selected = mutableListOf<RouteOption>()
+        for (objective in RouteObjective.plannerCases) {
+            if (objective == RouteObjective.LOWEST_COST &&
+                candidates.none { it.estimatedChargingCostValue != null }
+            ) {
+                continue
+            }
+            val best = candidates.minWithOrNull(comparator(objective)) ?: continue
+            selected.add(labeled(best, objective))
+        }
+        return deduplicatedOptions(selected)
+    }
+
+    fun deduplicatedOptions(options: List<RouteOption>): List<RouteOption> {
+        val unique = mutableListOf<RouteOption>()
+        val indexByKey = mutableMapOf<String, Int>()
+        for (option in options) {
+            val key = sequenceKey(option)
+            val existingIndex = indexByKey[key]
+            if (existingIndex != null) {
+                val existing = unique[existingIndex]
+                unique[existingIndex] = existing.copy(
+                    supportedObjectives = existing.supportedObjectives + option.supportedObjectives,
+                )
+            } else {
+                indexByKey[key] = unique.size
+                unique.add(option)
+            }
+        }
+        return unique
+    }
+
+    private fun labeled(option: RouteOption, objective: RouteObjective): RouteOption =
+        option.copy(
+            title = objective.title,
+            mode = objective.mode,
+            objective = objective,
+            supportedObjectives = setOf(objective),
+        )
+
+    private fun sequenceKey(option: RouteOption): String =
+        ChargerScoring.sequenceKey(option.chargingStops.map { it.chargerId })
+
+    private fun comparator(objective: RouteObjective): Comparator<RouteOption> {
+        fun tieBreak(a: RouteOption, b: RouteOption): Int {
+            if (a.totalEtaMinutes != b.totalEtaMinutes) return a.totalEtaMinutes.compareTo(b.totalEtaMinutes)
+            if (a.chargingStops.size != b.chargingStops.size) return a.chargingStops.size.compareTo(b.chargingStops.size)
+            if (a.riskScore != b.riskScore) return a.riskScore.compareTo(b.riskScore)
+            return sequenceKey(a).compareTo(sequenceKey(b))
+        }
+        return Comparator { a, b ->
+            when (objective) {
+                RouteObjective.FASTEST, RouteObjective.DIRECT, RouteObjective.VERIFIED -> tieBreak(a, b)
+                RouteObjective.FEWEST_STOPS ->
+                    if (a.chargingStops.size != b.chargingStops.size) {
+                        a.chargingStops.size.compareTo(b.chargingStops.size)
+                    } else {
+                        tieBreak(a, b)
+                    }
+                RouteObjective.RELIABLE ->
+                    if (a.riskScore != b.riskScore) a.riskScore.compareTo(b.riskScore) else tieBreak(a, b)
+                RouteObjective.LOWEST_COST -> {
+                    val ac = a.estimatedChargingCostValue ?: Double.MAX_VALUE
+                    val bc = b.estimatedChargingCostValue ?: Double.MAX_VALUE
+                    if (ac != bc) ac.compareTo(bc) else tieBreak(a, b)
+                }
+            }
+        }
+    }
+}
