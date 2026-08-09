@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -40,13 +41,20 @@ import com.evfastroute.core.NavigationApp
 import com.evfastroute.core.NavigationLinks
 import com.evfastroute.core.NavigationPoint
 import com.evfastroute.core.PlaceCandidate
+import com.evfastroute.core.Region
 import com.evfastroute.core.RouteOption
+import com.evfastroute.core.Units
 
 @Composable
 fun PlannerApp(vm: TripViewModel = viewModel()) {
+    if (vm.isEditingSettings) {
+        SettingsScreen(vm)
+        return
+    }
     if (vm.isPickingVehicle) {
         VehiclePicker(
             current = vm.selectedPreset,
+            usesMiles = vm.usesMiles,
             onSelect = vm::selectPreset,
             onClose = vm::hideVehiclePicker,
         )
@@ -57,9 +65,18 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { Text("EV FastRoute", style = MaterialTheme.typography.headlineMedium) }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("EV FastRoute", style = MaterialTheme.typography.headlineMedium)
+                TextButton(onClick = vm::showSettings) { Text("Settings") }
+            }
+        }
 
-        item { VehicleCard(preset = vm.selectedPreset, onClick = vm::showVehiclePicker) }
+        item { VehicleCard(preset = vm.selectedPreset, usesMiles = vm.usesMiles, onClick = vm::showVehiclePicker) }
 
         item {
             AddressField(
@@ -137,13 +154,92 @@ fun PlannerApp(vm: TripViewModel = viewModel()) {
                 )
             }
             vm.destination?.let { dest ->
-                item { DirectionsRow(option = selected, destination = dest) }
+                item { DirectionsRow(option = selected, destination = dest, preferredNav = vm.preferredNav) }
             }
         }
 
         itemsIndexed(vm.options) { index, option ->
-            RouteCard(option, selected = index == vm.selectedIndex, onClick = { vm.selectOption(index) })
+            RouteCard(
+                option,
+                selected = index == vm.selectedIndex,
+                currencySymbol = vm.region.currencySymbol,
+                onClick = { vm.selectOption(index) },
+            )
         }
+    }
+}
+
+@Composable
+private fun SettingsScreen(vm: TripViewModel) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Settings", style = MaterialTheme.typography.headlineSmall)
+                TextButton(onClick = vm::hideSettings) { Text("Close") }
+            }
+        }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Distance units", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ToggleButton("Kilometers", selected = !vm.usesMiles, modifier = Modifier.weight(1f)) { vm.setUsesMiles(false) }
+                    ToggleButton("Miles", selected = vm.usesMiles, modifier = Modifier.weight(1f)) { vm.setUsesMiles(true) }
+                }
+            }
+        }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Preferred navigation", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NavigationApp.entries.forEach { app ->
+                        ToggleButton(shortNavLabel(app), selected = vm.preferredNav == app, modifier = Modifier.weight(1f)) {
+                            vm.setPreferredNav(app)
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Text("Region", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        }
+        items(Region.entries) { region ->
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { vm.setRegion(region) },
+                colors = if (region == vm.region) {
+                    CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                } else {
+                    CardDefaults.cardColors()
+                },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(region.flag, style = MaterialTheme.typography.titleMedium)
+                    Text(region.displayName, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToggleButton(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    if (selected) {
+        Button(onClick = onClick, modifier = modifier) { Text(label) }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = modifier) { Text(label) }
     }
 }
 
@@ -221,7 +317,7 @@ private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRan
 }
 
 @Composable
-private fun RouteCard(option: RouteOption, selected: Boolean, onClick: () -> Unit) {
+private fun RouteCard(option: RouteOption, selected: Boolean, currencySymbol: String, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
         colors = if (selected) {
@@ -248,7 +344,7 @@ private fun RouteCard(option: RouteOption, selected: Boolean, onClick: () -> Uni
                 style = MaterialTheme.typography.bodyMedium,
             )
             option.estimatedChargingCostValue?.takeIf { it > 0 }?.let { cost ->
-                Text("Est. charging cost ~${"%.2f".format(cost)}", style = MaterialTheme.typography.bodySmall)
+                Text("Est. charging cost ~$currencySymbol${"%.2f".format(cost)}", style = MaterialTheme.typography.bodySmall)
             }
             option.itinerary.forEach { stop ->
                 Text(
@@ -262,7 +358,7 @@ private fun RouteCard(option: RouteOption, selected: Boolean, onClick: () -> Uni
 }
 
 @Composable
-private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate) {
+private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate, preferredNav: NavigationApp) {
     val context = LocalContext.current
     var note by remember(option, destination) { mutableStateOf<String?>(null) }
 
@@ -280,15 +376,22 @@ private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate) {
         note = if (!opened) "No app on this device could open ${app.displayName}." else plan.note
     }
 
+    // The preferred app leads and reads as the primary action; the others stay available.
+    val apps = listOf(preferredNav) + (NavigationApp.entries - preferredNav)
+
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Directions", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedButton(onClick = { launch(NavigationApp.GOOGLE_MAPS) }, modifier = Modifier.weight(1f)) { Text("Google") }
-            OutlinedButton(onClick = { launch(NavigationApp.WAZE) }, modifier = Modifier.weight(1f)) { Text("Waze") }
-            OutlinedButton(onClick = { launch(NavigationApp.DEFAULT) }, modifier = Modifier.weight(1f)) { Text("Default") }
+            apps.forEach { app ->
+                if (app == preferredNav) {
+                    Button(onClick = { launch(app) }, modifier = Modifier.weight(1f)) { Text(shortNavLabel(app)) }
+                } else {
+                    OutlinedButton(onClick = { launch(app) }, modifier = Modifier.weight(1f)) { Text(shortNavLabel(app)) }
+                }
+            }
         }
         note?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -296,8 +399,14 @@ private fun DirectionsRow(option: RouteOption, destination: PlaceCandidate) {
     }
 }
 
+private fun shortNavLabel(app: NavigationApp): String = when (app) {
+    NavigationApp.GOOGLE_MAPS -> "Google"
+    NavigationApp.WAZE -> "Waze"
+    NavigationApp.DEFAULT -> "Default"
+}
+
 @Composable
-private fun VehicleCard(preset: EvPreset, onClick: () -> Unit) {
+private fun VehicleCard(preset: EvPreset, usesMiles: Boolean, onClick: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -312,13 +421,13 @@ private fun VehicleCard(preset: EvPreset, onClick: () -> Unit) {
                 Text("Change", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
             Text(preset.displayName, style = MaterialTheme.typography.titleMedium)
-            Text(presetSpecLine(preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(presetSpecLine(preset, usesMiles), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun VehiclePicker(current: EvPreset, onSelect: (EvPreset) -> Unit, onClose: () -> Unit) {
+private fun VehiclePicker(current: EvPreset, usesMiles: Boolean, onSelect: (EvPreset) -> Unit, onClose: () -> Unit) {
     var query by remember { mutableStateOf("") }
     val results = remember(query) { EvCatalog.search(query) }
 
@@ -366,7 +475,7 @@ private fun VehiclePicker(current: EvPreset, onSelect: (EvPreset) -> Unit, onClo
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         Text(preset.displayName, style = MaterialTheme.typography.titleSmall)
-                        Text(presetSpecLine(preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(presetSpecLine(preset, usesMiles), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -374,11 +483,11 @@ private fun VehiclePicker(current: EvPreset, onSelect: (EvPreset) -> Unit, onClo
     }
 }
 
-private fun presetSpecLine(preset: EvPreset): String {
+private fun presetSpecLine(preset: EvPreset, usesMiles: Boolean): String {
     val battery = "${trimDecimal(preset.batteryCapacityKwh)} kWh"
     val power = "${preset.maxDcChargingKw} kW DC"
     val connectors = preset.connectorTypes.joinToString("/") { it.name }
-    val range = preset.ratedRangeKm?.let { " · ~${it.toInt()} km" } ?: ""
+    val range = preset.ratedRangeKm?.let { " · ~${Units.formatDistance(it, usesMiles)}" } ?: ""
     return "$battery · $power · $connectors$range"
 }
 

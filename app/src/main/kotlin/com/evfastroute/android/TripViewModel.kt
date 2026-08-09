@@ -1,17 +1,20 @@
 package com.evfastroute.android
 
+import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.evfastroute.android.net.PhotonClient
 import com.evfastroute.core.EvCatalog
 import com.evfastroute.core.EvPreset
 import com.evfastroute.core.LatLon
+import com.evfastroute.core.NavigationApp
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.PlaceRanker
+import com.evfastroute.core.Region
 import com.evfastroute.core.RouteOption
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -25,15 +28,26 @@ class WaypointField(val id: Int) {
     var searchJob: Job? = null
 }
 
-class TripViewModel : ViewModel() {
+class TripViewModel(application: Application) : AndroidViewModel(application) {
 
     private val planner = TripPlanner()
+    private val settings = SettingsStore(application)
+
+    // Persisted preferences (Settings screen). Region also decides connector standards + currency.
+    var region by mutableStateOf(settings.region)
+        private set
+    var usesMiles by mutableStateOf(settings.usesMiles)
+        private set
+    var preferredNav by mutableStateOf(settings.preferredNav)
+        private set
+    var isEditingSettings by mutableStateOf(false)
+        private set
 
     // The chosen car. Starts at a sensible default; the user can pick any catalog vehicle. The
     // planner only needs the physics ([EvPreset.toVehicle]); the preset keeps make/model for display.
     var selectedPreset by mutableStateOf(EvCatalog.default)
         private set
-    private val vehicle get() = selectedPreset.toVehicle()
+    private val vehicle get() = selectedPreset.toVehicle(european = region.isEuropean)
 
     var isPickingVehicle by mutableStateOf(false)
         private set
@@ -144,6 +158,26 @@ class TripViewModel : ViewModel() {
 
     fun showVehiclePicker() { isPickingVehicle = true }
     fun hideVehiclePicker() { isPickingVehicle = false }
+
+    fun showSettings() { isEditingSettings = true }
+    fun hideSettings() { isEditingSettings = false }
+
+    fun setRegion(value: Region) {
+        region = value
+        settings.region = value
+        // If the user hasn't overridden units, follow the new region's convention.
+        usesMiles = settings.usesMiles
+    }
+
+    fun setUsesMiles(value: Boolean) {
+        usesMiles = value
+        settings.usesMiles = value
+    }
+
+    fun setPreferredNav(value: NavigationApp) {
+        preferredNav = value
+        settings.preferredNav = value
+    }
 
     fun selectPreset(preset: EvPreset) {
         selectedPreset = preset

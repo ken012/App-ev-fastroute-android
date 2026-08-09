@@ -54,7 +54,8 @@ platform-native but must match feature-for-feature.
 | Arrival timeline | Compose | ⬜ |
 | Live traffic overlay | (limited on free stack) | ⬜ |
 | Sequential nav handoff (persistent session, per-stop advance) | Android intents | ⬜ (basic handoff done; session pending) |
-| Settings (units, region, preferred nav, etc.) | Compose | ⬜ |
+| Region + units model (currency/connectors/imperial/detect) | `Region.kt` + `Units` (:core) | `RegionTest` ✅ |
+| Settings (units, region, preferred nav) + persistence | Compose SettingsScreen + `SettingsStore` | ✅ v1 |
 
 ## Verification
 - `:core` builds + tests on free GitHub Actions (Linux) — proves logic parity.
