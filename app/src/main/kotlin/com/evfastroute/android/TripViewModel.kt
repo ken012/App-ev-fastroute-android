@@ -45,6 +45,10 @@ class TripViewModel : ViewModel() {
 
     var options by mutableStateOf<List<RouteOption>>(emptyList())
         private set
+    var selectedIndex by mutableStateOf(0)
+        private set
+    val selectedOption: RouteOption?
+        get() = options.getOrNull(selectedIndex)
     var isPlanning by mutableStateOf(false)
         private set
     var errorMessage: String? by mutableStateOf(null)
@@ -85,6 +89,10 @@ class TripViewModel : ViewModel() {
         destinationSuggestions = emptyList()
     }
 
+    fun selectOption(index: Int) {
+        if (index in options.indices) selectedIndex = index
+    }
+
     fun plan() {
         val from = start
         val to = destination
@@ -105,7 +113,10 @@ class TripViewModel : ViewModel() {
                 arrivalBufferPercent = arrivalBufferPercent.toDouble(),
             )
             when (result) {
-                is TripPlanner.Result.Success -> options = result.options
+                is TripPlanner.Result.Success -> {
+                    options = result.options
+                    selectedIndex = 0
+                }
                 is TripPlanner.Result.Error -> errorMessage = result.message
             }
             isPlanning = false

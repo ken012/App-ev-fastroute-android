@@ -41,7 +41,7 @@ platform-native but must match feature-for-feature.
 | ORS HTTP fetch | `:app` net/OrsClient | ✅ |
 | Photon geocoding parsing → PlaceCandidate | `Photon.kt` (:core) | `PhotonTest` ✅ |
 | Photon HTTP fetch | `:app` net/PhotonClient | ✅ |
-| Map + charger pins + route line | MapLibre Compose | ⬜ |
+| Map + charger pins + route line | MapLibre RouteMap (OpenFreeMap) | ✅ v1 |
 | Planner (start/dest search + battery/buffer + Find Route) | Compose PlannerApp | ✅ v1 |
 | Route options list (title/ETA/stops/cost/itinerary) | Compose RouteCard | ✅ v1 |
 | Arrival timeline | Compose | ⬜ |
