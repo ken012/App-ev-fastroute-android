@@ -15,7 +15,8 @@ class RoutePlannerTest {
     private fun charger(id: String) = Charger(
         id = id, name = id, network = "Net", latitude = 0.0, longitude = 0.0,
         connectorTypes = listOf(ConnectorType.CCS), maxKw = 150, numberOfStalls = 4,
-        reliabilityScore = 90.0, pricePerKwh = 0.5,
+        reliabilityScore = 90.0, pricePerKwh = 0.5, priceCurrencyCode = "USD",
+        dataProviderTitle = "Test provider", dataProviderLicense = "CC BY 4.0",
     )
 
     @Test
@@ -34,6 +35,8 @@ class RoutePlannerTest {
         assertEquals(1, route.itinerary.size)
         assertEquals(ItineraryStop.Kind.CHARGING, route.itinerary[0].kind)
         assertEquals(180, route.itinerary[0].arrivalMinutesFromStart)
+        assertEquals("Test provider", route.chargingStops[0].dataProviderTitle)
+        assertEquals("CC BY 4.0", route.chargingStops[0].dataProviderLicense)
     }
 
     @Test
@@ -130,5 +133,17 @@ class RoutePlannerTest {
                 directMinutes = 120, vehicle = bigBattery, currentSOC = 90.0, arrivalBufferPercent = 10.0,
             ),
         )
+    }
+
+    @Test
+    fun unknownOrMixedCurrencyCostIsNotPresentedAsAComparableEstimate() {
+        val unknown = charger("unknown").copy(pricePerKwh = null, priceCurrencyCode = null)
+        val unknownRoute = RoutePlanner.buildRoute(
+            id = "u", sequence = listOf(unknown),
+            legDistancesKm = listOf(300.0, 300.0), legDurationMinutes = listOf(180, 180),
+            directMinutes = 360, vehicle = vehicle, currentSOC = 80.0, arrivalBufferPercent = 10.0,
+        )!!
+        assertNull(unknownRoute.estimatedChargingCostValue)
+        assertTrue(RouteObjective.LOWEST_COST !in RoutePlanner.optimize(listOf(unknownRoute)).flatMap { it.supportedObjectives })
     }
 }

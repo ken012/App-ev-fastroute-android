@@ -42,4 +42,12 @@ class OpenRouteServiceTest {
     fun emptyFeaturesReturnsNull() {
         assertNull(OpenRouteService.parse("""{"type":"FeatureCollection","features":[]}"""))
     }
+
+    @Test
+    fun rejectsZeroSummaryShortGeometryInvalidCoordinatesAndMalformedJson() {
+        assertNull(OpenRouteService.parse("""{"features":[{"properties":{"summary":{"distance":0,"duration":60}},"geometry":{"coordinates":[[0,0],[1,1]]}}]}"""))
+        assertNull(OpenRouteService.parse("""{"features":[{"properties":{"summary":{"distance":100,"duration":60}},"geometry":{"coordinates":[[0,0]]}}]}"""))
+        assertNull(OpenRouteService.parse("""{"features":[{"properties":{"summary":{"distance":100,"duration":60}},"geometry":{"coordinates":[[0,95],[1,1]]}}]}"""))
+        assertNull(OpenRouteService.parse("not-json"))
+    }
 }

@@ -3,6 +3,7 @@ package com.evfastroute.core
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertNull
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /** Ports the iOS charger-projection assertions (forward progress + corridor distance). */
@@ -28,5 +29,20 @@ class CorridorTest {
     @Test
     fun tooFewPointsReturnsNull() {
         assertNull(Corridor.project(0.0, 0.0, listOf(LatLon(0.0, 0.0))))
+    }
+
+    @Test
+    fun coveringBoxesPadTheAcceptedCorridorAndNeverDropTheRouteTail() {
+        val longRoute = (0..30).map { LatLon(45.0, -80.0 + it * 0.2) }
+        val boxes = Corridor.coveringBoxes(longRoute, corridorRadiusKm = 45.0, preferredSegmentKm = 100.0, maxBoxes = 4)
+        assertTrue(boxes.size <= 4)
+        assertTrue(boxes.first().minLon < longRoute.first().longitude)
+        assertTrue(boxes.last().maxLon > longRoute.last().longitude)
+        assertTrue(boxes.all { it.maxLat - 45.0 > 0.35 && 45.0 - it.minLat > 0.35 })
+    }
+
+    @Test
+    fun emptyRouteProducesNoQueryBoxes() {
+        assertEquals(emptyList(), Corridor.coveringBoxes(emptyList()))
     }
 }

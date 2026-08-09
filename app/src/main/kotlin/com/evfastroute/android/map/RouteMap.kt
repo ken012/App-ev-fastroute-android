@@ -2,9 +2,20 @@ package com.evfastroute.android.map
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -37,7 +48,10 @@ private class MapState {
     var waypoints: List<LatLon> = emptyList()
     var endpoints: List<LatLon> = emptyList()
     var hasFitted = false
+    var loadState by mutableStateOf<MapLoadState>(MapLoadState.LOADING)
 }
+
+private enum class MapLoadState { LOADING, LOADED, FAILED }
 
 @Composable
 fun RouteMap(
@@ -51,29 +65,45 @@ fun RouteMap(
     val mapView = rememberMapViewWithLifecycle()
     val state = remember { MapState() }
 
-    AndroidView(
-        modifier = modifier,
-        factory = {
-            mapView.getMapAsync { map ->
-                state.map = map
-                map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
-                    state.style = style
-                    applyRoute(style, map, state)
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = {
+                mapView.addOnDidFailLoadingMapListener { state.loadState = MapLoadState.FAILED }
+                mapView.addOnDidFinishLoadingMapListener { state.loadState = MapLoadState.LOADED }
+                mapView.getMapAsync { map ->
+                    state.map = map
+                    map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
+                        state.style = style
+                        applyRoute(style, map, state)
+                    }
                 }
-            }
-            mapView
-        },
-        update = {
-            // A new route (different option or fresh plan) should re-frame the camera, not stay
-            // latched on the first one.
-            if (routeGeometry != state.route) state.hasFitted = false
-            state.route = routeGeometry
-            state.chargers = chargers
-            state.waypoints = waypoints
-            state.endpoints = listOfNotNull(start, destination)
-            state.style?.let { applyRoute(it, state.map, state) }
-        },
-    )
+                mapView
+            },
+            update = {
+                if (routeGeometry != state.route) state.hasFitted = false
+                state.route = routeGeometry
+                state.chargers = chargers
+                state.waypoints = waypoints
+                state.endpoints = listOfNotNull(start, destination)
+                state.style?.let { applyRoute(it, state.map, state) }
+            },
+        )
+        when (state.loadState) {
+            MapLoadState.LOADING -> Text(
+                "Loading map…",
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            MapLoadState.FAILED -> Text(
+                "The map tiles couldn't load. Your verified route details and navigation handoff are still available below.",
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            MapLoadState.LOADED -> Unit
+        }
+    }
 }
 
 private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
@@ -157,6 +187,13 @@ private fun rememberMapViewWithLifecycle(): MapView {
     val mapView = remember { MapView(context) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, mapView) {
+        var destroyed = false
+        fun destroyOnce() {
+            if (!destroyed) {
+                destroyed = true
+                mapView.onDestroy()
+            }
+        }
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_CREATE -> mapView.onCreate(null)
@@ -164,14 +201,14 @@ private fun rememberMapViewWithLifecycle(): MapView {
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()
                 Lifecycle.Event.ON_PAUSE -> mapView.onPause()
                 Lifecycle.Event.ON_STOP -> mapView.onStop()
-                Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
+                Lifecycle.Event.ON_DESTROY -> destroyOnce()
                 else -> {}
             }
         }
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)
-            mapView.onDestroy()
+            destroyOnce()
         }
     }
     return mapView

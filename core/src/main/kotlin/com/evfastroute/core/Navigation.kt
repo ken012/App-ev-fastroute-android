@@ -149,11 +149,13 @@ object NavigationLinks {
     private fun percentEncode(value: String): String {
         val unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
         return buildString {
-            value.forEach { ch ->
-                if (ch in unreserved) {
-                    append(ch)
+            value.toByteArray(Charsets.UTF_8).forEach { byte ->
+                val unsigned = byte.toInt() and 0xFF
+                val char = unsigned.toChar()
+                if (unsigned < 128 && char in unreserved) {
+                    append(char)
                 } else {
-                    ch.toString().toByteArray(Charsets.UTF_8).forEach { b -> append("%%%02X".format(b.toInt() and 0xFF)) }
+                    append("%%%02X".format(unsigned))
                 }
             }
         }
@@ -213,6 +215,8 @@ data class NavigationSession(
         val handoff = lastHandoffAtMillis ?: return false
         val sample = sampleAtMillis ?: return false
         if (sample < handoff) return false
+        if (sample > nowMillis + MAX_SAMPLE_CLOCK_SKEW_MILLIS) return false
+        if (nowMillis - sample > MAX_LOCATION_SAMPLE_AGE_MILLIS) return false
         if (nowMillis - handoff < MIN_HANDOFF_DURATION_MILLIS) return false
         val accuracy = horizontalAccuracyMeters ?: return false
         if (accuracy < 0 || accuracy > MAX_ARRIVAL_ACCURACY_METERS) return false
@@ -224,6 +228,27 @@ data class NavigationSession(
         const val ARRIVAL_RADIUS_METERS = 200.0
         const val MAX_ARRIVAL_ACCURACY_METERS = 100.0
         const val MIN_HANDOFF_DURATION_MILLIS = 20_000L
+        const val MAX_LOCATION_SAMPLE_AGE_MILLIS = 30_000L
+        const val MAX_SAMPLE_CLOCK_SKEW_MILLIS = 5_000L
+        const val MAX_SESSION_AGE_MILLIS = 24 * 60 * 60 * 1_000L
+        const val MAX_SESSION_POINTS = 32
+
+        fun isRestorable(session: NavigationSession, nowMillis: Long): Boolean =
+            nowMillis >= 0L &&
+                session.itinerary.size in 1..MAX_SESSION_POINTS &&
+                session.nextIndex in session.itinerary.indices &&
+                session.itinerary.all(::isValidPoint) &&
+                session.startedAtMillis > 0L &&
+                (session.lastHandoffAtMillis == null ||
+                    session.lastHandoffAtMillis in session.startedAtMillis..(nowMillis + MAX_SAMPLE_CLOCK_SKEW_MILLIS)) &&
+                (session.arrivalPromptedIndex == null || session.arrivalPromptedIndex == session.nextIndex) &&
+                session.startedAtMillis <= nowMillis + MAX_SAMPLE_CLOCK_SKEW_MILLIS &&
+                nowMillis - session.startedAtMillis <= MAX_SESSION_AGE_MILLIS
+
+        private fun isValidPoint(point: NavigationPoint): Boolean =
+            point.latitude.isFinite() && point.latitude in -90.0..90.0 &&
+                point.longitude.isFinite() && point.longitude in -180.0..180.0 &&
+                point.name.trim().isNotEmpty() && point.name.length <= 200
 
         /** Builds a session over the intermediate [stops] followed by [destination]. */
         fun create(

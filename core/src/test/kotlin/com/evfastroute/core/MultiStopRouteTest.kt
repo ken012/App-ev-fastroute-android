@@ -17,7 +17,7 @@ class MultiStopRouteTest {
     private fun charger(id: String) = Charger(
         id = id, name = id, network = "Net", latitude = 0.0, longitude = 0.0,
         connectorTypes = listOf(ConnectorType.CCS), maxKw = 150, numberOfStalls = 4,
-        reliabilityScore = 90.0, pricePerKwh = 0.5,
+        reliabilityScore = 90.0, pricePerKwh = 0.5, priceCurrencyCode = "USD",
     )
 
     private fun waypoint(name: String) =

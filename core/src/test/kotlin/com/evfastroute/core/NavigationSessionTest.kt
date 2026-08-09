@@ -60,6 +60,9 @@ class NavigationSessionTest {
         assertFalse(s.shouldSuggestArrival(45.0, -75.0, 20.0, 25_000L, 25_000L))
         // Sample older than the handoff.
         assertFalse(s.shouldSuggestArrival(45.0, -75.0, 20.0, 5_000L, 40_000L))
+        // Stale or implausibly future samples.
+        assertFalse(s.shouldSuggestArrival(45.0, -75.0, 20.0, 40_000L, 71_000L))
+        assertFalse(s.shouldSuggestArrival(45.0, -75.0, 20.0, 46_000L, 40_000L))
         // Poor / missing / negative accuracy.
         assertFalse(s.shouldSuggestArrival(45.0, -75.0, 150.0, 40_000L, 40_000L))
         assertFalse(s.shouldSuggestArrival(45.0, -75.0, null, 40_000L, 40_000L))
@@ -68,6 +71,35 @@ class NavigationSessionTest {
         assertFalse(s.shouldSuggestArrival(45.01, -75.0, 20.0, 40_000L, 40_000L))
         // Already prompted for this point.
         assertFalse(s.recordArrivalPrompt().shouldSuggestArrival(45.0, -75.0, 20.0, 40_000L, 40_000L))
+    }
+
+    @Test
+    fun onlyRecentSessionsAreRestored() {
+        val recent = session().copy(startedAtMillis = 1_000_000L)
+        assertTrue(NavigationSession.isRestorable(recent, 1_000_000L + 60_000L))
+        assertFalse(NavigationSession.isRestorable(recent, 1_000_000L + NavigationSession.MAX_SESSION_AGE_MILLIS + 1))
+        assertFalse(NavigationSession.isRestorable(recent.copy(startedAtMillis = 2_000_000L), 1_000_000L))
+    }
+
+    @Test
+    fun rejectsCorruptPersistedSessions() {
+        val now = 1_100_000L
+        val valid = session().copy(startedAtMillis = 1_000_000L)
+        assertFalse(NavigationSession.isRestorable(valid.copy(nextIndex = -1), now))
+        assertFalse(
+            NavigationSession.isRestorable(
+                valid.copy(itinerary = listOf(stopA.copy(latitude = Double.NaN)) + destination),
+                now,
+            ),
+        )
+        assertFalse(
+            NavigationSession.isRestorable(
+                valid.copy(itinerary = List(NavigationSession.MAX_SESSION_POINTS + 1) { stopA }),
+                now,
+            ),
+        )
+        assertFalse(NavigationSession.isRestorable(valid.copy(arrivalPromptedIndex = 1), now))
+        assertFalse(NavigationSession.isRestorable(valid.copy(lastHandoffAtMillis = now + 10_000L), now))
     }
 
     @Test

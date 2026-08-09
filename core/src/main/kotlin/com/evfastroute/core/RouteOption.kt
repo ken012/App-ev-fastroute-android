@@ -12,6 +12,9 @@ data class ChargingStop(
     val arrivalBatteryPercent: Int,
     val targetBatteryPercent: Int,
     val chargeDurationMinutes: Int,
+    val dataProviderTitle: String? = null,
+    val dataProviderLicense: String? = null,
+    val dataProviderWebsiteUrl: String? = null,
 )
 
 /** One arrival point in travel order (a charging stop or a user visit), with elapsed time + SOC. */
@@ -41,6 +44,7 @@ data class RouteOption(
     /** The driven road path (start → chargers → destination) for the map polyline. */
     val geometry: List<LatLon> = emptyList(),
     val estimatedChargingCostValue: Double? = null,
+    val estimatedChargingCostCurrencyCode: String? = null,
     val estimatedCostText: String? = null,
     /** Drive-segment index at whose end each charging stop is reached. Aligned to [chargingStops].
      * Because user waypoints add extra segments, these are the interleaved positions, not 0..n. */

@@ -42,6 +42,21 @@ enum class Region(val code: String, val displayName: String) {
         else -> listOf(ConnectorType.CCS2, ConnectorType.TYPE2)
     }
 
+    /** Regional search fallback used only until the device supplies a location or trip anchor. */
+    val searchCenter: LatLon get() = when (this) {
+        US -> LatLon(39.8283, -98.5795)
+        CA -> LatLon(45.4215, -75.6972)
+        GB -> LatLon(52.3555, -1.1743)
+        DE -> LatLon(51.1657, 10.4515)
+        FR -> LatLon(46.2276, 2.2137)
+        NL -> LatLon(52.1326, 5.2913)
+        NO -> LatLon(60.4720, 8.4689)
+        SE -> LatLon(60.1282, 18.6435)
+        CH -> LatLon(46.8182, 8.2275)
+        IT -> LatLon(41.8719, 12.5674)
+        ES -> LatLon(40.4637, -3.7492)
+    }
+
     companion object {
         /** Maps an ISO 3166-1 alpha-2 code to a supported Region, defaulting to US. */
         fun from(isoCountryCode: String?): Region =

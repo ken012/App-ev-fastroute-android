@@ -19,7 +19,7 @@ data class RouteLeg(
 // --- GeoJSON response DTOs ---
 
 @Serializable
-private data class OrsSummary(val distance: Double = 0.0, val duration: Double = 0.0)
+private data class OrsSummary(val distance: Double? = null, val duration: Double? = null)
 
 @Serializable
 private data class OrsProperties(val summary: OrsSummary? = null)
@@ -41,18 +41,27 @@ object OpenRouteService {
     fun requestBody(fromLat: Double, fromLon: Double, toLat: Double, toLon: Double): String =
         """{"coordinates":[[$fromLon,$fromLat],[$toLon,$toLat]]}"""
 
-    fun parse(geojsonBody: String): RouteLeg? {
+    fun parse(geojsonBody: String): RouteLeg? = runCatching {
         val response = json.decodeFromString<OrsResponse>(geojsonBody)
         val feature = response.features.firstOrNull() ?: return null
         val summary = feature.properties?.summary ?: return null
+        val distanceMeters = summary.distance ?: return null
+        val durationSeconds = summary.duration ?: return null
+        if (!distanceMeters.isFinite() || distanceMeters <= 0.0) return null
+        if (!durationSeconds.isFinite() || durationSeconds <= 0.0) return null
         // GeoJSON coordinates are [longitude, latitude].
         val geometry = (feature.geometry?.coordinates ?: emptyList()).mapNotNull { coord ->
-            if (coord.size >= 2) LatLon(latitude = coord[1], longitude = coord[0]) else null
+            if (coord.size < 2) return@mapNotNull null
+            val lon = coord[0]
+            val lat = coord[1]
+            if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) null
+            else LatLon(latitude = lat, longitude = lon)
         }
+        if (geometry.size < 2) return null
         return RouteLeg(
-            distanceKm = summary.distance / 1000.0,
-            durationMinutes = maxOf(1, (summary.duration / 60.0).roundToInt()),
+            distanceKm = distanceMeters / 1000.0,
+            durationMinutes = maxOf(1, (durationSeconds / 60.0).roundToInt()),
             geometry = geometry,
         )
-    }
+    }.getOrNull()
 }

@@ -22,13 +22,21 @@ data class Charger(
     val maxKw: Int,
     val numberOfStalls: Int,
     val availableStalls: Int? = null,
-    val status: ChargerStatus = ChargerStatus.AVAILABLE,
-    val reliabilityScore: Double = 90.0,
-    val pricePerKwh: Double = 0.0,
+    val status: ChargerStatus = ChargerStatus.LIMITED,
+    /** Data-confidence score derived only from fields OCM actually reports; never live uptime. */
+    val reliabilityScore: Double = 50.0,
+    /** Null means OCM did not publish an unambiguous per-kWh rate. Unknown is never treated as free. */
+    val pricePerKwh: Double? = null,
+    val priceCurrencyCode: String? = null,
     val detourMinutes: Int = 0,
     val region: String = "",
     val dataSource: ChargerDataSource = ChargerDataSource.OPEN_CHARGE_MAP,
     val connectorDetails: List<ChargerConnector> = emptyList(),
+    /** Provider-specific attribution returned by OCM. Kept with every routed stop because OCM
+     * requires the applicable provider and license to remain visible to end users. */
+    val dataProviderTitle: String? = null,
+    val dataProviderLicense: String? = null,
+    val dataProviderWebsiteUrl: String? = null,
 ) {
     /** Best kW usable by a vehicle's connectors, or null if incompatible. Port of iOS compatiblePower. */
     fun compatiblePower(vehicleConnectors: List<ConnectorType>): Int? {

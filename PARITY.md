@@ -1,68 +1,69 @@
-# EV FastRoute — iOS ⇄ Android parity
+# EV FastRoute — iOS/Android parity
 
-Goal: **both apps at the same standard.** iOS (SwiftUI/MapKit, repo `ken012/App-ev-fastroute`)
-is the canonical spec. Android is native Kotlin/Compose. The *intelligence* (routing, charging,
-objectives) is ported **test-for-test** so behavior is provably identical; the UI is
-platform-native but must match feature-for-feature.
+iOS is SwiftUI/MapKit; Android is native Kotlin/Compose. The platforms share product behavior and
+ported/tested planning logic, but use different map/search/routing providers where OS APIs differ.
 
-## Free stack (Android)
-| Concern | iOS | Android | Notes |
+## Current Android stack
+
+| Concern | iOS | Android | Production note |
 |---|---|---|---|
-| Map render | MapKit | **MapLibre GL** | free, no key |
-| Tiles/style | (MapKit) | **OpenFreeMap** | free, no key |
-| Routing | MKDirections | **OpenRouteService** | free key (~2k/day); paid/self-host at scale |
-| Address search | MKLocalSearch | **Photon** (OSM) | free, no key |
-| Chargers | Open Charge Map | Open Charge Map | same API + key |
-| Storage | UserDefaults | DataStore | |
+| Map | MapKit | MapLibre Native + OpenFreeMap | Android keeps on-map attribution enabled |
+| Routing | MKDirections | openrouteservice | Traffic-free; production capacity/proxy required at scale |
+| Search | MKLocalSearch | Android device geocoder + Photon + shared ranker | Photon public demo has no SLA |
+| Chargers | Open Charge Map | Open Charge Map | `compact=false`, `opendata=true`, provider attribution shown |
+| Storage | UserDefaults | app-private SharedPreferences | Android cloud/device-transfer backup disabled |
+| Navigation | Apple/Google/Waze handoff | Google/Waze/default-app handoff | Waze/default are sequential stop-by-stop |
 
-## Ported logic (pure Kotlin `:core`, JVM-testable on free CI)
-| iOS source | Android | Tests ported | Status |
-|---|---|---|---|
-| `ChargePlan.swift` (ChargePlanner) | `ChargePlanner.kt` | `ChargePlannerTest` | ✅ done |
-| haversine (NavigationTracker) | `Geometry.kt` | `GeometryTest` | ✅ done |
-| `RouteOptimizationService` energyPlan | `EnergyModel.kt` | `EnergyModelTest` | ✅ done |
-| `RouteObjective.swift` | `RouteObjective.kt` | `RouteObjectiveTest` | ✅ done |
-| Charger projection / corridor | `Corridor.kt` | `CorridorTest` | ✅ done |
-| Planner models (Charger/Vehicle/ConnectorType/ProjectedCharger) | `Models.kt` | `ChargerScoringTest` | ✅ done |
-| Charger scoring (speedScore/networkMatches/sequenceKey) | `ChargerScoring.kt` | `ChargerScoringTest` | ✅ done |
-| Beam-search sequence selection (objective-aware) | `ChargerSequenceSelector.kt` | `ChargerSequenceSelectorTest` | ✅ done |
-| Build route from sequence+leg data (SOC walk → RouteOption) | `RoutePlanner.buildRoute` | `RoutePlannerTest` | ✅ done |
-| Optimize: best-per-objective + dedup-merge + comparator | `RoutePlanner.optimize` | `RoutePlannerTest` | ✅ done |
-| Live planning glue (direct→project→beam-search→build→optimize) | `:app` TripPlanner | (net-bound) | ✅ |
-| `RangeEstimator.swift` | `RangeEstimator.kt` | `RangeEstimatorTest` | ✅ done |
-| `PlaceSearch.swift` (ranker) | `PlaceRanker.kt` | `PlaceRankerTest` | ✅ done |
-| `EVCatalog.swift` (presets/search/region connectors/makeVehicle) | `EvCatalog.kt` | `EvCatalogTest` | ✅ done |
-| Bundled 789-car OpenEV catalog (parse/promote + built-in fallback) | `EvCatalog.loadBundledCatalog` + `assets/ev_catalog.json` + `EvApp` | `CatalogDocumentTest` | ✅ done |
+## Shared/ported behavior
 
-## App/services (Android `:app`, added after core CI is green)
-| Feature (iOS) | Android | Status |
+| Capability | Android implementation | Verification |
 |---|---|---|
-| OCM response parsing → Charger (+ connector/reliability) | `OpenChargeMap.kt` (:core) | `OpenChargeMapTest` ✅ |
-| OCM HTTP fetch | `:app` OpenChargeMapClient | ⬜ |
-| ORS directions parsing → RouteLeg | `OpenRouteService.kt` (:core) | `OpenRouteServiceTest` ✅ |
-| ORS HTTP fetch | `:app` net/OrsClient | ✅ |
-| Photon geocoding parsing → PlaceCandidate | `Photon.kt` (:core) | `PhotonTest` ✅ |
-| Photon HTTP fetch | `:app` net/PhotonClient | ✅ |
-| Map + charger pins + route line | MapLibre RouteMap (OpenFreeMap) | ✅ v1 |
-| Planner (start/dest search + battery/buffer + Find Route) | Compose PlannerApp | ✅ v1 |
-| Route options list (title/ETA/stops/cost/itinerary) | Compose RouteCard | ✅ v1 |
-| Vehicle picker + catalog (search, pick, region connectors) | Compose VehiclePicker + `EvCatalog` | ✅ v1 |
-| Nav handoff URL builders (Google/Waze/geo, waypoint cap, notes) | `Navigation.kt` (:core) | `NavigationLinksTest` ✅ |
-| Nav handoff launch (ACTION_VIEW intent) + Directions buttons (interleaves user waypoints + chargers) | `:app` NavLauncher + DirectionsRow | ✅ v1 |
-| Multi-stop through-waypoints SOC walk (global charging) | `RoutePlanner.buildRouteThroughWaypoints` | `MultiStopRouteTest` ✅ |
-| Multi-stop planning glue (corridor/progress/beam over full trip) | `:app` TripPlanner.planThrough | ✅ |
-| Multi-stop UI (add/edit/reorder/remove stops + map pins) | Compose WaypointRow + RouteMap | ✅ v1 |
-| Arrival timeline (per-stop clock time + battery, depart→arrive) | Compose ArrivalTimeline | ✅ v1 |
-| Scheduled departure (shifts arrival-timeline clock) + free-flow ETA disclosure | Compose ArrivalTimeline | ✅ v1 |
-| Live traffic overlay / traffic-aware ETAs | — | ⛔ not feasible on the free stack (no free MapKit-equivalent traffic source; documented, not faked) |
-| Sequential-handoff session state machine (progress + arrival prompt) | `NavigationSession` (:core) | `NavigationSessionTest` | ✅ |
-| Sequential nav handoff (persistent session, per-stop advance) | Compose GuidedTripBanner + `SettingsStore` | ✅ v1 (manual confirm) |
-| GPS auto-arrival prompt (live location → shouldSuggestArrival) | `LocationProvider` (LocationManager) + GuidedTripBanner | ✅ v1 (foreground; never auto-advances) |
-| Region + units model (currency/connectors/imperial/detect) | `Region.kt` + `Units` (:core) | `RegionTest` ✅ |
-| Settings (units, region, preferred nav) + persistence | Compose SettingsScreen + `SettingsStore` | ✅ v1 |
-| Tester distribution (installable APK + Firebase App Distribution) | CI artifact + guarded `distribute` job | ✅ v1 (see DISTRIBUTION.md) |
+| Charge planning and SOC feasibility | `ChargePlanner`, `EnergyModel`, `RoutePlanner` | JVM tests |
+| Objective-aware global charger sequence | `ChargerSequenceSelector` beam search | JVM tests |
+| Fastest, confidence, known-cost, Fewest stops | `RouteObjective` + optimizer/dedup | JVM tests |
+| Fewest stops may charge beyond 80% (up to 95%) | route builders calculate next-leg requirement | JVM tests |
+| Multi-stop visits with globally inserted charging | `planThrough` + interleaved route builder | JVM tests |
+| Conservative range | vehicle/battery health/weather/load/style/route speed + uncertainty | JVM tests |
+| 789-car editable vehicle catalog | bundled OpenEV asset + Kia supplement | real-asset tests |
+| Charger compatibility/power/status/cost/confidence | strict OCM mapping + filters | JVM tests |
+| Search relevance/proximity/typos/dedup/broadening | `PlaceRanker` | JVM tests |
+| Route geometry/corridor segmentation | strict ORS parsing + route covering boxes | JVM tests |
+| Google/Waze/default deep links | UTF-8-safe coordinate-first URLs | JVM tests |
+| Guided external-navigation progress | expiring `NavigationSession` + foreground arrival prompt | JVM tests + UI smoke |
+| Saved trips, vehicle overrides, filters, settings | `SettingsStore` | serialization/runtime smoke |
 
-## Verification
-- `:core` builds + tests on free GitHub Actions (Linux) — proves logic parity.
-- `:app` builds an APK on CI; distributed to testers via **Firebase App Distribution** (free).
-- Keep this checklist current: a feature isn't "done" until it exists on **both** platforms.
+## Android app capabilities
+
+- Start/destination search, current location, ordered user waypoints, reorder/remove.
+- Vehicle picker, per-vehicle editable battery/consumption/DC power/connectors/battery health.
+- Weather loss, passenger/cargo, driving-style range assumptions.
+- Minimum charging speed, preferred/avoided networks, optional low-confidence exclusion.
+- Live charging-station corridor retrieval in bounded overlapping boxes with success-only caches.
+- Route option cards, deduplicated-objective badges, map line/pins, arrival battery/timeline, known
+  single-currency cost only, provider-specific OCM licensing, and visible safety disclosure.
+- Manual and five-minute-on-resume route refresh (suppressed during an active guided trip).
+- Full Google trip where the documented waypoint cap permits; safe sequential sessions otherwise.
+- Adaptive launcher icon, edge-to-edge/dark theme, API 26 minimum, API 36 target, R8 release build,
+  16 KB native-library CI check, unit/lint/build gate, and emulator launch smoke test.
+
+## Deliberate differences / remaining product work
+
+- Android free-stack ETAs do not include live traffic and the map has no traffic overlay. The UI
+  labels them traffic-free; do not market traffic parity with iOS.
+- Foreground-only location is deliberate. Background navigation remains in Google/Waze/default maps.
+- The vehicle catalog is decoded synchronously once at process startup (about 404 KB/789 records),
+  with a built-in fallback if it fails. Measure cold start on release devices before expanding it.
+- Android launches in English only. Localization is a separate product milestone before marketing
+  to non-English audiences.
+- The bounded beam search reports “fewest charging sessions found among verified candidates,” not a
+  mathematical proof over every station on earth. Every minimum-count candidate retained by the
+  bounded search is road-verified before a longer candidate can receive the label.
+- Production provider capacity, a secure service proxy, Play listing/policy setup, permanent signing,
+  and physical-device/road smoke tests are operational release blockers documented in
+  `PLAY_SUBMISSION.md`; they cannot be completed solely in source code.
+
+## Verification standard
+
+A feature is “code-complete” only after deterministic tests and a compiled Android module. It is
+“release-verified” only after the signed artifact passes lint/R8/16 KB checks, emulator launch, and
+the physical test matrix in `PLAY_SUBMISSION.md` on the same commit.

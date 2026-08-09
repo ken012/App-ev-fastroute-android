@@ -1,0 +1,60 @@
+EV FastRoute third-party notices and data attribution
+
+SOFTWARE INCLUDED IN THE APP
+
+AndroidX, Jetpack Compose, Kotlin, kotlinx.coroutines, kotlinx.serialization, OkHttp, and Okio are
+distributed under the Apache License 2.0. A complete copy is bundled as Apache-2.0.txt.
+
+Photon geocoder software is Apache-2.0 licensed. EV FastRoute uses the public Photon service or the
+compatible endpoint configured by the publisher; Photon is not embedded.
+
+MapLibre Native is distributed under the BSD 2-Clause License:
+
+Copyright (c) 2021 MapLibre contributors
+Copyright (c) 2018-2021 MapTiler.com
+Copyright (c) 2014-2020 Mapbox
+
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions
+and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list of
+conditions and the following disclaimer in the documentation and/or other materials provided with
+the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Canonical MapLibre notices: https://github.com/maplibre/maplibre-native
+
+MAP AND PLACE-SEARCH DATA
+
+Map style and tiles: OpenFreeMap — https://openfreemap.org/
+Map and Photon search data: © OpenStreetMap contributors, ODbL —
+https://www.openstreetmap.org/copyright
+Photon service: https://photon.komoot.io/
+The Android device manufacturer may supply an additional platform geocoder.
+
+ROUTING
+
+© openrouteservice.org by HeiGIT | Map data © OpenStreetMap contributors
+Results: CC BY 4.0 — https://openrouteservice.org/terms-of-service/
+
+CHARGING STATIONS
+
+Charging-station data © Open Charge Map contributors and applicable listed data providers.
+EV FastRoute requests opendata=true and displays the provider-specific attribution returned with
+each planned charging stop. https://www.openchargemap.org/about/
+
+VEHICLE CATALOG
+
+OpenEV Data v1.24.0 is CDLA-Permissive-2.0 licensed. The complete agreement follows this notice in
+the in-app licenses screen and is bundled as CDLA-Permissive-2.0.txt. Kia supplemental records
+retain their manufacturer source URLs in the catalog.

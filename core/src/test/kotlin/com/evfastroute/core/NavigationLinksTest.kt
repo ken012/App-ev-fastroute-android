@@ -119,6 +119,13 @@ class NavigationLinksTest {
     }
 
     @Test
+    fun percentEncodingHandlesUnicodeCodePointsWithoutReplacementBytes() {
+        val waze = NavigationLinks.wazeDirectionsUrl(point(45.0, -75.0, "Café 🚗"))!!
+        assertTrue(waze.contains("q=Caf%C3%A9%20%F0%9F%9A%97"), waze)
+        assertTrue(!waze.contains("%EF%BF%BD"), waze)
+    }
+
+    @Test
     fun fromSerializedFallsBackToGoogle() {
         assertEquals(NavigationApp.WAZE, NavigationApp.fromSerialized("waze"))
         assertEquals(NavigationApp.GOOGLE_MAPS, NavigationApp.fromSerialized("nonsense"))

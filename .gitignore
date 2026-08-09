@@ -1,12 +1,15 @@
 # Gradle / Android
 .gradle/
+.kotlin/
 build/
 local.properties
 captures/
 *.apk
 *.aab
 *.keystore
-!debug.keystore
+*.jks
+*.p12
+service-account*.json
 
 # IDE
 .idea/

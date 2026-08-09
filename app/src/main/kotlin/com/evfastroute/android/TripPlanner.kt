@@ -2,6 +2,9 @@ package com.evfastroute.android
 
 import com.evfastroute.android.net.OcmClient
 import com.evfastroute.android.net.OrsClient
+import com.evfastroute.android.net.ServiceFailure
+import com.evfastroute.android.net.ServiceResult
+import com.evfastroute.android.net.userMessage
 import com.evfastroute.core.Charger
 import com.evfastroute.core.ChargerScoring
 import com.evfastroute.core.ChargerStatus
@@ -17,6 +20,8 @@ import com.evfastroute.core.RouteLeg
 import com.evfastroute.core.RouteObjective
 import com.evfastroute.core.RouteOption
 import com.evfastroute.core.RoutePlanner
+import com.evfastroute.core.RangeDrivingStyle
+import com.evfastroute.core.RangeEstimator
 import com.evfastroute.core.Vehicle
 import kotlin.math.roundToInt
 
@@ -27,23 +32,48 @@ import kotlin.math.roundToInt
 
 class TripPlanner {
 
+    data class Conditions(
+        val weatherRangeLossPercent: Double = 0.0,
+        val extraLoadKg: Double = 0.0,
+        val drivingStyle: RangeDrivingStyle = RangeDrivingStyle.BALANCED,
+    )
+
+    data class Preferences(
+        val minimumChargerSpeedKw: Int = 0,
+        val preferredNetworks: Set<String> = emptySet(),
+        val avoidedNetworks: Set<String> = emptySet(),
+        val avoidLowConfidenceStations: Boolean = false,
+    )
+
     suspend fun plan(
         start: LatLon,
         destination: LatLon,
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
+        conditions: Conditions = Conditions(),
+        preferences: Preferences = Preferences(),
     ): Result {
-        val legCache = HashMap<String, RouteLeg?>()
-        val direct = cachedRoute(legCache, start.latitude, start.longitude, destination.latitude, destination.longitude)
-            ?: return Result.Error("Couldn't calculate a driving route. Check the addresses and your connection.")
+        val context = PlanContext()
+        val direct = cachedRoute(context, start.latitude, start.longitude, destination.latitude, destination.longitude)
+            ?: return Result.Error(context.routeFailure?.userMessage("Driving directions")
+                ?: "No drivable route connects those places. Check the selected addresses.")
         val totalDistanceKm = direct.distanceKm
         val directMinutes = direct.durationMinutes
+        val routeVehicle = RangeEstimator.planningVehicle(
+            from = vehicle,
+            currentBatteryPercent = currentSOC,
+            arrivalBufferPercent = arrivalBufferPercent,
+            weatherRangeLossPercent = conditions.weatherRangeLossPercent,
+            extraLoadKg = conditions.extraLoadKg,
+            drivingStyle = conditions.drivingStyle,
+            averageSpeedKph = RangeEstimator.averageSpeedKph(direct.distanceKm, direct.durationMinutes * 60.0),
+        )
 
         val energy = EnergyModel.energyPlan(
             distanceKm = totalDistanceKm,
-            capacityKwh = vehicle.batteryCapacityKwh,
-            efficiencyKwhPerKm = vehicle.efficiencyKwhPerKm,
+            capacityKwh = routeVehicle.batteryCapacityKwh,
+            efficiencyKwhPerKm = routeVehicle.efficiencyKwhPerKm,
             currentBatteryPercent = currentSOC,
             arrivalBufferPercent = arrivalBufferPercent,
         )
@@ -51,13 +81,15 @@ class TripPlanner {
             return Result.Success(listOf(directOption(directMinutes, energy.arrivalIfNoChargePct, direct.geometry)))
         }
 
-        val box = boundingBox(direct.geometry) ?: return Result.Error("No route geometry was returned.")
-        val chargers = OcmClient.chargers(box.minLat, box.minLon, box.maxLat, box.maxLon)
+        val chargers = when (val fetched = chargersAlong(direct.geometry)) {
+            is ServiceResult.Failure -> return Result.Error(fetched.error.userMessage("Live charging-station data"))
+            is ServiceResult.Success -> fetched.value
+        }
         if (chargers.isEmpty()) {
-            return Result.Error("No live charging stations were found along this route (is the OCM key set?).")
+            return Result.Error("No live charging stations were reported along this corridor. Try fewer filters or check another route.")
         }
 
-        val projected = chargers.filter { usableCharger(it, vehicle) }.mapNotNull { charger ->
+        val projected = chargers.filter { usableCharger(it, routeVehicle, preferences) }.mapNotNull { charger ->
             val projection = Corridor.project(charger.latitude, charger.longitude, direct.geometry) ?: return@mapNotNull null
             if (projection.corridorKm > 40) null
             else ProjectedCharger(charger, projection.progressKm, projection.corridorKm)
@@ -69,11 +101,11 @@ class TripPlanner {
         val seen = mutableSetOf<String>()
         val candidates = mutableListOf<RouteOption>()
         for (objective in RouteObjective.plannerCases) {
-            val prefer = preference(objective, vehicle)
+            val prefer = preference(objective, routeVehicle, preferences)
             val sequences = ChargerSequenceSelector.selectChargerSequences(
                 projected = projected,
                 totalDistanceKm = totalDistanceKm,
-                vehicle = vehicle,
+                vehicle = routeVehicle,
                 currentSOC = currentSOC,
                 arrivalBufferPercent = arrivalBufferPercent,
                 prefer = prefer,
@@ -85,7 +117,7 @@ class TripPlanner {
                 val key = ChargerScoring.sequenceKey(sequence.map { it.id })
                 if (!seen.add(key)) continue
                 val built = buildFromSequence(
-                    key, sequence, start, destination, directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache,
+                    key, sequence, start, destination, directMinutes, routeVehicle, currentSOC, arrivalBufferPercent, context,
                 )
                 if (built != null) candidates.add(built)
             }
@@ -93,13 +125,17 @@ class TripPlanner {
 
         // Fewest-stops guarantee (iOS parity): if the minimum-stop-count sequences all failed road
         // verification, try more at that count before optimize lets a longer route wear the label.
-        ensureFewestStops(candidates, projected, totalDistanceKm, vehicle, currentSOC, arrivalBufferPercent, seen) { sequence, key ->
-            buildFromSequence(key, sequence, start, destination, directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache)
+        ensureFewestStops(
+            candidates, projected, totalDistanceKm, routeVehicle, currentSOC,
+            arrivalBufferPercent, preferences, seen,
+        ) { sequence, key ->
+            buildFromSequence(key, sequence, start, destination, directMinutes, routeVehicle, currentSOC, arrivalBufferPercent, context)
         }
 
         val options = RoutePlanner.optimize(candidates)
         return if (options.isEmpty()) {
-            Result.Error("No safe charging plan spans this route. Try a lower minimum charger speed or more starting charge.")
+            Result.Error(context.routeFailure?.userMessage("Driving directions")
+                ?: "No verified station sequence can safely span this route. Try fewer filters, a higher starting charge, or a different route.")
         } else {
             Result.Success(options)
         }
@@ -108,8 +144,8 @@ class TripPlanner {
     /**
      * Ports iOS findRoutes' fewest-stops fallback: when no built candidate reached the minimum
      * achievable stop count (the leading low-count sequences may have failed the road-routed leg
-     * checks), generate more sequences at that same count (skipping already-tried ones) and build up
-     * to 6 more, stopping at the first success — so [RoutePlanner.optimize] can't label a
+     * checks), generate more sequences at that same count (skipping already-tried ones) and verify
+     * every bounded beam-search candidate at that count, stopping at the first success — so [RoutePlanner.optimize] can't label a
      * higher-stop-count route as "Fewest charging stops" when a shorter one is actually achievable.
      */
     private suspend fun ensureFewestStops(
@@ -119,6 +155,7 @@ class TripPlanner {
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
+        preferences: Preferences,
         seen: MutableSet<String>,
         build: suspend (sequence: List<Charger>, key: String) -> RouteOption?,
     ) {
@@ -128,18 +165,15 @@ class TripPlanner {
             vehicle = vehicle,
             currentSOC = currentSOC,
             arrivalBufferPercent = arrivalBufferPercent,
-            prefer = preference(RouteObjective.FEWEST_STOPS, vehicle),
+            prefer = preference(RouteObjective.FEWEST_STOPS, vehicle, preferences),
             objective = RouteObjective.FEWEST_STOPS,
             maxSequences = 24,
         )
         val minCount = fewest.minOfOrNull { it.size } ?: return
         if (candidates.any { it.chargingStops.size == minCount }) return
-        var attempts = 0
         for (sequence in fewest.filter { it.size == minCount }) {
-            if (attempts >= 6) break
             val key = ChargerScoring.sequenceKey(sequence.map { it.id })
             if (!seen.add(key)) continue
-            attempts++
             val built = build(sequence, key)
             if (built != null) { candidates.add(built); break }
         }
@@ -154,13 +188,13 @@ class TripPlanner {
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
-        legCache: MutableMap<String, RouteLeg?>,
+        context: PlanContext,
     ): RouteOption? {
         val points = listOf(start) + sequence.map { LatLon(it.latitude, it.longitude) } + listOf(destination)
         val legs = mutableListOf<RouteLeg>()
         for (index in 0 until points.size - 1) {
             val leg = cachedRoute(
-                legCache,
+                context,
                 points[index].latitude, points[index].longitude,
                 points[index + 1].latitude, points[index + 1].longitude,
             ) ?: return null
@@ -184,13 +218,20 @@ class TripPlanner {
     // and keeps a single multi-stop plan under the free ORS rate limit (40/min) — without the cache,
     // throttling nulls legs and the user sees a spurious "no plan" failure. Scoped to one plan call.
     private suspend fun cachedRoute(
-        cache: MutableMap<String, RouteLeg?>,
+        context: PlanContext,
         fromLat: Double, fromLon: Double, toLat: Double, toLon: Double,
     ): RouteLeg? {
         val key = "${round5(fromLat)},${round5(fromLon)}>${round5(toLat)},${round5(toLon)}"
-        cache[key]?.let { return it }
-        if (cache.containsKey(key)) return null // negative result cached — don't refetch this leg
-        return OrsClient.route(fromLat, fromLon, toLat, toLon).also { cache[key] = it }
+        context.legCache[key]?.let { return it }
+        if (context.legCache.containsKey(key)) return null // negative result cached — don't refetch this leg
+        return when (val result = OrsClient.route(fromLat, fromLon, toLat, toLon)) {
+            is ServiceResult.Success -> result.value.also { context.legCache[key] = it }
+            is ServiceResult.Failure -> {
+                context.routeFailure = context.routeFailure ?: result.error
+                context.legCache[key] = null
+                null
+            }
+        }
     }
 
     private fun round5(value: Double): Long = Math.round(value * 100_000.0)
@@ -198,13 +239,22 @@ class TripPlanner {
     // Mirrors iOS findRoutes' pre-selection filter: only consider chargers that are not offline and
     // have at least one connector this vehicle can use. Excluding them BEFORE projection/beam-search
     // stops offline stops being presented and stops incompatible stops crowding out a valid plan.
-    private fun usableCharger(charger: Charger, vehicle: Vehicle): Boolean =
-        charger.status != ChargerStatus.OFFLINE && charger.compatiblePower(vehicle.connectorTypes) != null
+    private fun usableCharger(charger: Charger, vehicle: Vehicle, preferences: Preferences): Boolean {
+        if (charger.status == ChargerStatus.OFFLINE) return false
+        if (preferences.avoidLowConfidenceStations && charger.reliabilityScore < 65.0) return false
+        if (ChargerScoring.networkMatches(charger.network, preferences.avoidedNetworks)) return false
+        val compatiblePower = charger.compatiblePower(vehicle.connectorTypes) ?: return false
+        return compatiblePower >= preferences.minimumChargerSpeedKw
+    }
 
-    private fun preference(objective: RouteObjective, vehicle: Vehicle): (Charger) -> Double = when (objective) {
-        RouteObjective.FASTEST -> { charger -> ChargerScoring.speedScore(charger, vehicle, emptySet()) }
+    private fun preference(
+        objective: RouteObjective,
+        vehicle: Vehicle,
+        preferences: Preferences,
+    ): (Charger) -> Double = when (objective) {
+        RouteObjective.FASTEST -> { charger -> ChargerScoring.speedScore(charger, vehicle, preferences.preferredNetworks) }
         RouteObjective.RELIABLE -> { charger -> charger.reliabilityScore }
-        RouteObjective.LOWEST_COST -> { charger -> -charger.pricePerKwh }
+        RouteObjective.LOWEST_COST -> { charger -> charger.pricePerKwh?.let { -it } ?: Double.NEGATIVE_INFINITY }
         else -> { _ -> 0.0 }
     }
 
@@ -238,15 +288,23 @@ class TripPlanner {
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
+        conditions: Conditions = Conditions(),
+        preferences: Preferences = Preferences(),
     ): Result {
-        if (waypoints.isEmpty()) return plan(start, destination, vehicle, currentSOC, arrivalBufferPercent)
+        if (waypoints.size > MAX_USER_WAYPOINTS) {
+            return Result.Error("A trip can include up to $MAX_USER_WAYPOINTS visit stops. Split larger itineraries into separate trips.")
+        }
+        if (waypoints.isEmpty()) {
+            return plan(start, destination, vehicle, currentSOC, arrivalBufferPercent, conditions, preferences)
+        }
 
-        val legCache = HashMap<String, RouteLeg?>()
+        val context = PlanContext()
         val points = listOf(start) + waypoints.map { LatLon(it.latitude, it.longitude) } + listOf(destination)
         val legRoutes = mutableListOf<RouteLeg>()
         for (i in 0 until points.size - 1) {
-            val leg = cachedRoute(legCache, points[i].latitude, points[i].longitude, points[i + 1].latitude, points[i + 1].longitude)
-                ?: return Result.Error("Couldn't calculate a driving route through your stops. Check the addresses and your connection.")
+            val leg = cachedRoute(context, points[i].latitude, points[i].longitude, points[i + 1].latitude, points[i + 1].longitude)
+                ?: return Result.Error(context.routeFailure?.userMessage("Driving directions")
+                    ?: "No drivable route connects every selected stop. Check the stop order and addresses.")
             legRoutes.add(leg)
         }
 
@@ -256,12 +314,21 @@ class TripPlanner {
         for (leg in legRoutes) { legStartProgressKm.add(cumulative); cumulative += leg.distanceKm }
         val totalDistanceKm = cumulative
         val directMinutes = legRoutes.sumOf { it.durationMinutes }
+        val routeVehicle = RangeEstimator.planningVehicle(
+            from = vehicle,
+            currentBatteryPercent = currentSOC,
+            arrivalBufferPercent = arrivalBufferPercent,
+            weatherRangeLossPercent = conditions.weatherRangeLossPercent,
+            extraLoadKg = conditions.extraLoadKg,
+            drivingStyle = conditions.drivingStyle,
+            averageSpeedKph = RangeEstimator.averageSpeedKph(totalDistanceKm, directMinutes * 60.0),
+        )
         // Each user waypoint sits at a leg boundary: waypoint k is the arrival of leg k.
         val waypointProgress = waypoints.indices.map { legStartProgressKm[it + 1] }
 
         val energy = EnergyModel.energyPlan(
-            distanceKm = totalDistanceKm, capacityKwh = vehicle.batteryCapacityKwh,
-            efficiencyKwhPerKm = vehicle.efficiencyKwhPerKm, currentBatteryPercent = currentSOC,
+            distanceKm = totalDistanceKm, capacityKwh = routeVehicle.batteryCapacityKwh,
+            efficiencyKwhPerKm = routeVehicle.efficiencyKwhPerKm, currentBatteryPercent = currentSOC,
             arrivalBufferPercent = arrivalBufferPercent,
         )
         if (!energy.needsCharge) {
@@ -269,18 +336,20 @@ class TripPlanner {
                 listOf(
                     directThroughOption(
                         directMinutes, legRoutes, waypoints, waypointProgress, totalDistanceKm,
-                        vehicle, currentSOC, combinedGeometry,
+                        routeVehicle, currentSOC, combinedGeometry,
                     ),
                 ),
             )
         }
 
-        val box = boundingBox(combinedGeometry) ?: return Result.Error("No route geometry was returned.")
-        val chargers = OcmClient.chargers(box.minLat, box.minLon, box.maxLat, box.maxLon)
-        if (chargers.isEmpty()) {
-            return Result.Error("No live charging stations were found along this route (is the OCM key set?).")
+        val chargers = when (val fetched = chargersAlong(combinedGeometry)) {
+            is ServiceResult.Failure -> return Result.Error(fetched.error.userMessage("Live charging-station data"))
+            is ServiceResult.Success -> fetched.value
         }
-        val projected = chargers.filter { usableCharger(it, vehicle) }.mapNotNull { charger ->
+        if (chargers.isEmpty()) {
+            return Result.Error("No live charging stations were reported along this corridor. Try fewer filters or check another route.")
+        }
+        val projected = chargers.filter { usableCharger(it, routeVehicle, preferences) }.mapNotNull { charger ->
             val projection = Corridor.project(charger.latitude, charger.longitude, combinedGeometry) ?: return@mapNotNull null
             if (projection.corridorKm > 40) null else ProjectedCharger(charger, projection.progressKm, projection.corridorKm)
         }
@@ -292,11 +361,11 @@ class TripPlanner {
         val seen = mutableSetOf<String>()
         val candidates = mutableListOf<RouteOption>()
         for (objective in RouteObjective.plannerCases) {
-            val prefer = preference(objective, vehicle)
+            val prefer = preference(objective, routeVehicle, preferences)
             val sequences = ChargerSequenceSelector.selectChargerSequences(
                 projected = projected,
                 totalDistanceKm = totalDistanceKm,
-                vehicle = vehicle,
+                vehicle = routeVehicle,
                 currentSOC = currentSOC,
                 arrivalBufferPercent = arrivalBufferPercent,
                 prefer = prefer,
@@ -309,22 +378,26 @@ class TripPlanner {
                 if (!seen.add(key)) continue
                 val built = buildThroughSequence(
                     key, sequence, start, destination, waypoints, waypointProgress, progressById,
-                    directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache,
+                    directMinutes, routeVehicle, currentSOC, arrivalBufferPercent, context,
                 )
                 if (built != null) candidates.add(built)
             }
         }
 
-        ensureFewestStops(candidates, projected, totalDistanceKm, vehicle, currentSOC, arrivalBufferPercent, seen) { sequence, key ->
+        ensureFewestStops(
+            candidates, projected, totalDistanceKm, routeVehicle, currentSOC,
+            arrivalBufferPercent, preferences, seen,
+        ) { sequence, key ->
             buildThroughSequence(
                 key, sequence, start, destination, waypoints, waypointProgress, progressById,
-                directMinutes, vehicle, currentSOC, arrivalBufferPercent, legCache,
+                directMinutes, routeVehicle, currentSOC, arrivalBufferPercent, context,
             )
         }
 
         val options = RoutePlanner.optimize(candidates)
         return if (options.isEmpty()) {
-            Result.Error("No safe charging plan spans this route. Try a lower minimum charger speed or more starting charge.")
+            Result.Error(context.routeFailure?.userMessage("Driving directions")
+                ?: "No verified station sequence can safely span this route. Try fewer filters or a higher starting charge.")
         } else {
             Result.Success(options)
         }
@@ -342,7 +415,7 @@ class TripPlanner {
         vehicle: Vehicle,
         currentSOC: Double,
         arrivalBufferPercent: Double,
-        legCache: MutableMap<String, RouteLeg?>,
+        context: PlanContext,
     ): RouteOption? {
         data class OrderedVia(val via: PlannedVia, val progressKm: Double, val point: LatLon)
 
@@ -371,7 +444,7 @@ class TripPlanner {
         val legs = mutableListOf<RouteLeg>()
         for (i in 0 until orderedPoints.size - 1) {
             val leg = cachedRoute(
-                legCache,
+                context,
                 orderedPoints[i].latitude, orderedPoints[i].longitude,
                 orderedPoints[i + 1].latitude, orderedPoints[i + 1].longitude,
             ) ?: return null
@@ -431,21 +504,43 @@ class TripPlanner {
         )
     }
 
-    private data class Box(val minLat: Double, val minLon: Double, val maxLat: Double, val maxLon: Double)
-
-    private fun boundingBox(points: List<LatLon>): Box? {
-        if (points.isEmpty()) return null
-        var minLat = points.first().latitude
-        var maxLat = minLat
-        var minLon = points.first().longitude
-        var maxLon = minLon
-        for (point in points) {
-            minLat = minOf(minLat, point.latitude); maxLat = maxOf(maxLat, point.latitude)
-            minLon = minOf(minLon, point.longitude); maxLon = maxOf(maxLon, point.longitude)
+    private suspend fun chargersAlong(geometry: List<LatLon>): ServiceResult<List<Charger>> {
+        val boxes = Corridor.coveringBoxes(geometry)
+        if (boxes.isEmpty()) {
+            return ServiceResult.Failure(
+                com.evfastroute.android.net.ServiceFailure(
+                    com.evfastroute.android.net.ServiceFailureKind.INVALID_RESPONSE,
+                ),
+            )
         }
-        val pad = 0.05 // ~5 km, so corridor-adjacent chargers are included
-        return Box(minLat - pad, minLon - pad, maxLat + pad, maxLon + pad)
+        val chargers = linkedMapOf<String, Charger>()
+        var successfulRequests = 0
+        var firstFailure: ServiceFailure? = null
+        for (box in boxes) {
+            when (val response = OcmClient.chargers(box.minLat, box.minLon, box.maxLat, box.maxLon)) {
+                is ServiceResult.Success -> {
+                    successfulRequests++
+                    response.value.forEach { chargers[it.id] = it }
+                }
+                is ServiceResult.Failure -> {
+                    firstFailure = firstFailure ?: response.error
+                    if (response.error.kind == com.evfastroute.android.net.ServiceFailureKind.CONFIGURATION ||
+                        response.error.kind == com.evfastroute.android.net.ServiceFailureKind.UNAUTHORIZED
+                    ) break
+                }
+            }
+        }
+        return if (successfulRequests == 0 && firstFailure != null) {
+            ServiceResult.Failure(firstFailure)
+        } else {
+            ServiceResult.Success(chargers.values.toList())
+        }
     }
+
+    private data class PlanContext(
+        val legCache: MutableMap<String, RouteLeg?> = HashMap(),
+        var routeFailure: ServiceFailure? = null,
+    )
 
     sealed interface Result {
         data class Success(val options: List<RouteOption>) : Result

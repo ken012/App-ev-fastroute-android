@@ -48,15 +48,15 @@ enum class RouteObjective {
             FASTEST ->
                 "Lowest verified driving and charging time. More short charging stops can be faster than one long stop."
             RELIABLE ->
-                "Prioritizes stations with stronger availability and reliability signals."
+                "Prioritizes stations with complete operational, operator, power, and stall data. Live uptime is not available."
             LOWEST_COST ->
                 "Prioritizes the lowest estimated charging cost, then arrival time."
             FEWEST_STOPS ->
-                "Minimizes charging sessions first. Individual stops may be longer, including charging beyond 80%."
+                "Fewest charging sessions found among verified candidates. Stops may be longer, including charging beyond 80%."
             DIRECT ->
                 "No charging stop is needed to arrive with the selected battery buffer."
             VERIFIED ->
-                "A conservative fallback whose complete road sequence was verified by Apple Maps."
+                "A conservative fallback whose complete road sequence was verified by the routing service."
         }
 
     companion object {

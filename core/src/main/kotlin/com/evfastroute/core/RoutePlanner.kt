@@ -45,6 +45,8 @@ object RoutePlanner {
         var elapsedMinutes = 0
         var chargingMinutes = 0
         var totalCost = 0.0
+        var costCurrency: String? = null
+        var hasCompleteCost = true
         var reliabilitySum = 0.0
 
         for (index in sequence.indices) {
@@ -74,7 +76,14 @@ object RoutePlanner {
             )
             elapsedMinutes += minutes
             chargingMinutes += minutes
-            totalCost += ChargePlanner.energyAdded(arrivalInt, targetInt, capacity) * charger.pricePerKwh
+            val price = charger.pricePerKwh
+            val currency = charger.priceCurrencyCode
+            if (price == null || currency == null || (costCurrency != null && costCurrency != currency)) {
+                hasCompleteCost = false
+            } else {
+                costCurrency = currency
+                totalCost += ChargePlanner.energyAdded(arrivalInt, targetInt, capacity) * price
+            }
             reliabilitySum += charger.reliabilityScore
             stops.add(
                 ChargingStop(
@@ -82,6 +91,9 @@ object RoutePlanner {
                     latitude = charger.latitude, longitude = charger.longitude,
                     arrivalBatteryPercent = arrivalInt, targetBatteryPercent = targetInt,
                     chargeDurationMinutes = minutes,
+                    dataProviderTitle = charger.dataProviderTitle,
+                    dataProviderLicense = charger.dataProviderLicense,
+                    dataProviderWebsiteUrl = charger.dataProviderWebsiteUrl,
                 ),
             )
             soc = targetInt.toDouble()
@@ -111,7 +123,8 @@ object RoutePlanner {
             chargingStops = stops,
             itinerary = itinerary,
             geometry = legGeometries.flatten(),
-            estimatedChargingCostValue = if (sequence.isNotEmpty()) totalCost else null,
+            estimatedChargingCostValue = if (sequence.isNotEmpty() && hasCompleteCost) totalCost else null,
+            estimatedChargingCostCurrencyCode = if (sequence.isNotEmpty() && hasCompleteCost) costCurrency else null,
             stopSegmentIndices = sequence.indices.toList(),
         )
     }
@@ -149,6 +162,8 @@ object RoutePlanner {
         var elapsedMinutes = 0
         var chargingMinutes = 0
         var totalCost = 0.0
+        var costCurrency: String? = null
+        var hasCompleteCost = true
         var reliabilitySum = 0.0
         var chargerCount = 0
 
@@ -193,7 +208,14 @@ object RoutePlanner {
             itinerary.add(ItineraryStop(charger.name, ItineraryStop.Kind.CHARGING, elapsedMinutes, arrivalInt))
             elapsedMinutes += minutes
             chargingMinutes += minutes
-            totalCost += ChargePlanner.energyAdded(arrivalInt, targetInt, capacity) * charger.pricePerKwh
+            val price = charger.pricePerKwh
+            val currency = charger.priceCurrencyCode
+            if (price == null || currency == null || (costCurrency != null && costCurrency != currency)) {
+                hasCompleteCost = false
+            } else {
+                costCurrency = currency
+                totalCost += ChargePlanner.energyAdded(arrivalInt, targetInt, capacity) * price
+            }
             reliabilitySum += charger.reliabilityScore
             chargerCount++
             stops.add(
@@ -202,6 +224,9 @@ object RoutePlanner {
                     latitude = charger.latitude, longitude = charger.longitude,
                     arrivalBatteryPercent = arrivalInt, targetBatteryPercent = targetInt,
                     chargeDurationMinutes = minutes,
+                    dataProviderTitle = charger.dataProviderTitle,
+                    dataProviderLicense = charger.dataProviderLicense,
+                    dataProviderWebsiteUrl = charger.dataProviderWebsiteUrl,
                 ),
             )
             stopSegmentIndices.add(i)
@@ -232,7 +257,8 @@ object RoutePlanner {
             chargingStops = stops,
             itinerary = itinerary,
             geometry = legGeometries.flatten(),
-            estimatedChargingCostValue = if (chargerCount > 0) totalCost else null,
+            estimatedChargingCostValue = if (chargerCount > 0 && hasCompleteCost) totalCost else null,
+            estimatedChargingCostCurrencyCode = if (chargerCount > 0 && hasCompleteCost) costCurrency else null,
             stopSegmentIndices = stopSegmentIndices,
             userWaypoints = userWaypoints,
             userWaypointSegmentIndices = userWaypointSegmentIndices.toList(),

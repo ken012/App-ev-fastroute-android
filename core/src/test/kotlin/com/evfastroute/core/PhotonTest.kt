@@ -2,6 +2,7 @@ package com.evfastroute.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PhotonTest {
@@ -46,5 +47,13 @@ class PhotonTest {
     @Test
     fun emptyFeaturesReturnEmptyList() {
         assertTrue(Photon.parse("""{"type":"FeatureCollection","features":[]}""").isEmpty())
+    }
+
+    @Test
+    fun invalidCoordinatesAndMalformedJsonReturnNoCandidates() {
+        assertTrue(Photon.parse("""{"features":[{"geometry":{"coordinates":[0,100]},"properties":{"name":"Bad"}}]}""").isEmpty())
+        assertTrue(Photon.parse("not-json").isEmpty())
+        assertNull(Photon.parseOrNull("not-json"))
+        assertEquals(emptyList(), Photon.parseOrNull("""{"type":"FeatureCollection","features":[]}"""))
     }
 }

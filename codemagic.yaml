@@ -1,0 +1,85 @@
+workflows:
+  android-verify:
+    name: Android verification
+    instance_type: linux_x2
+    max_build_duration: 30
+    environment:
+      java: 17
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    scripts:
+      - name: Unit tests, lint, and build artifacts
+        script: |
+          ./gradlew \
+            :core:test \
+            :app:testDebugUnitTest \
+            :app:lintDebug \
+            :app:assembleDebug \
+            :app:bundleRelease \
+            --no-daemon \
+            --stacktrace \
+            --console=plain
+      - name: Verify 16 KB native-library compatibility
+        script: ./scripts/verify-16kb.sh app/build/outputs/apk/debug/app-debug.apk
+    artifacts:
+      - app/build/outputs/apk/debug/app-debug.apk
+      - app/build/outputs/bundle/release/app-release.aab
+      - app/build/reports/**
+
+  android-signed-release:
+    name: Signed Android internal release
+    instance_type: linux_x2
+    max_build_duration: 30
+    environment:
+      java: 17
+      android_signing:
+        - evfastroute-android-upload
+      groups:
+        - android-production
+    cache:
+      cache_paths:
+        - $HOME/.gradle/caches
+        - $HOME/.gradle/wrapper
+    scripts:
+      - name: Validate protected configuration
+        script: |
+          : "${CM_KEYSTORE_PATH:?Upload the evfastroute-android-upload signing identity}"
+          : "${CM_KEYSTORE_PASSWORD:?Missing keystore password}"
+          : "${CM_KEY_ALIAS:?Missing key alias}"
+          : "${CM_KEY_PASSWORD:?Missing key password}"
+          : "${ORS_API_KEY:?Add ORS_API_KEY to the android-production group}"
+          : "${OCM_API_KEY:?Add OCM_API_KEY to the android-production group}"
+      - name: Unit tests and lint
+        script: |
+          ./gradlew \
+            :core:test \
+            :app:testDebugUnitTest \
+            :app:lintRelease \
+            --no-daemon \
+            --stacktrace \
+            --console=plain
+      - name: Build signed APK and AAB
+        script: |
+          VERSION_CODE="$BUILD_NUMBER" \
+          VERSION_NAME="0.2.$BUILD_NUMBER" \
+          ./gradlew \
+            :app:assembleRelease \
+            :app:bundleRelease \
+            --no-daemon \
+            --stacktrace \
+            --console=plain
+      - name: Verify signing and 16 KB compatibility
+        script: |
+          apksigner verify --verbose app/build/outputs/apk/release/app-release.apk
+          mkdir -p build
+          jarsigner -verify -strict -verbose -certs \
+            app/build/outputs/bundle/release/app-release.aab 2>&1 | tee build/aab-signing-verification.txt
+          grep -Fq "jar verified." build/aab-signing-verification.txt
+          ./scripts/verify-16kb.sh app/build/outputs/apk/release/app-release.apk
+    artifacts:
+      - app/build/outputs/apk/release/app-release.apk
+      - app/build/outputs/bundle/release/app-release.aab
+      - app/build/outputs/mapping/release/mapping.txt
+      - app/build/reports/**

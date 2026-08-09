@@ -32,10 +32,16 @@ object Photon {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    fun parse(geojsonBody: String): List<PlaceCandidate> =
+    /** Null means malformed provider data; an empty list is a valid no-results response. */
+    fun parseOrNull(geojsonBody: String): List<PlaceCandidate>? = runCatching {
         json.decodeFromString<PhotonResponse>(geojsonBody).features.mapNotNull { feature ->
             val coords = feature.geometry?.coordinates ?: return@mapNotNull null
             if (coords.size < 2) return@mapNotNull null
+            val lon = coords[0]
+            val lat = coords[1]
+            if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) {
+                return@mapNotNull null
+            }
             val props = feature.properties ?: PhotonProperties()
 
             val streetLine = listOfNotNull(props.housenumber, props.street)
@@ -49,8 +55,11 @@ object Photon {
             PlaceCandidate(
                 placeName = placeName,
                 fullAddress = fullAddress,
-                latitude = coords[1],
-                longitude = coords[0],
+                latitude = lat,
+                longitude = lon,
             )
-        }
+        }.distinctBy { "${it.latitude},${it.longitude}" }
+    }.getOrNull()
+
+    fun parse(geojsonBody: String): List<PlaceCandidate> = parseOrNull(geojsonBody) ?: emptyList()
 }
