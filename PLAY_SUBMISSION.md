@@ -58,6 +58,9 @@ defer until after launch.
       library validation.
 - [ ] API 35/36 emulator smoke test and physical tests on at least: API 26–28, API 31–33 with
       approximate-only location, and API 35/36 with gesture navigation/dark mode.
+- [ ] On a clean install, complete onboarding and inspect Plan, Route, Garage, Settings, address
+      search, keyboard/insets, dark mode, and light mode at the smallest and largest supported font
+      sizes. Re-test the update path with existing saved settings so onboarding remains one-time.
 - [ ] Drive a safe real-world route with no charging, one charging stop, multiple charging stops,
       user waypoints, Fewest stops, unavailable network, provider rate limit, denied location, and
       external Google/Waze/default-map handoff.

@@ -431,7 +431,7 @@ private fun clockLabel(departureMillis: Long, offsetMinutes: Int): String {
 }
 
 @Composable
-private fun SavedTripsCard(
+internal fun SavedTripsCard(
     trips: List<SavedTripSnapshot>,
     message: String?,
     onSave: () -> Unit,
@@ -895,7 +895,7 @@ private fun RouteSafetyAndAttributionCard() {
 }
 
 @Composable
-private fun DirectionsRow(
+internal fun DirectionsRow(
     option: RouteOption,
     start: PlaceCandidate?,
     destination: PlaceCandidate,
@@ -959,7 +959,7 @@ private fun DirectionsRow(
 }
 
 @Composable
-private fun GuidedTripBanner(
+internal fun GuidedTripBanner(
     session: NavigationSession,
     arrivalSuggested: Boolean,
     hasLocationPermission: Boolean,
@@ -1195,7 +1195,7 @@ private fun VehicleEditor(vm: TripViewModel) {
 }
 
 @Composable
-private fun VehiclePicker(current: EvPreset, usesMiles: Boolean, onSelect: (EvPreset) -> Unit, onClose: () -> Unit) {
+internal fun VehiclePicker(current: EvPreset, usesMiles: Boolean, onSelect: (EvPreset) -> Unit, onClose: () -> Unit) {
     var query by remember { mutableStateOf("") }
     val results = remember(query) { EvCatalog.search(query) }
 

@@ -1,6 +1,7 @@
 package com.evfastroute.android
 
 import com.evfastroute.core.ConnectorType
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,5 +46,17 @@ class PersistedSettingsValidationTest {
         )
         assertFalse(valid.copy(currentSocPercent = Float.NaN).isValid(nowMillis = 2_000L))
         assertFalse(valid.copy(createdAtMillis = Long.MAX_VALUE).isValid(nowMillis = 2_000L))
+    }
+
+    @Test
+    fun garageIdentifiersAreTrimmedDeduplicatedAndBounded() {
+        val values = listOf(" car-a ", "car-a", "", "x".repeat(201)) +
+            (0..MAX_GARAGE_VEHICLES).map { "car-$it" }
+
+        val normalized = normalizeGarageVehicleIdentifiers(values)
+
+        assertEquals(MAX_GARAGE_VEHICLES, normalized.size)
+        assertEquals("car-a", normalized.first())
+        assertEquals(normalized.distinct(), normalized)
     }
 }

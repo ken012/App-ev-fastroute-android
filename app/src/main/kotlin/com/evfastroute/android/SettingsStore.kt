@@ -12,7 +12,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 const val MAX_USER_WAYPOINTS = 8
+internal const val MAX_GARAGE_VEHICLES = 20
 private const val MAX_PERSISTED_CLOCK_SKEW_MILLIS = 5 * 60_000L
+
+internal fun normalizeGarageVehicleIdentifiers(values: List<String>): List<String> = values
+    .map(String::trim)
+    .filter { it.isNotEmpty() && it.length <= 200 }
+    .distinct()
+    .take(MAX_GARAGE_VEHICLES)
 
 @Serializable
 data class VehicleOverride(
@@ -54,6 +61,9 @@ data class VehicleOverride(
 
 @Serializable
 private data class VehicleOverrideDocument(val values: Map<String, VehicleOverride> = emptyMap())
+
+@Serializable
+private data class GarageVehicleDocument(val identifiers: List<String> = emptyList())
 
 @Serializable
 data class SavedPlace(
@@ -113,6 +123,14 @@ class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("evfr_settings", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
 
+    var hasOnboarded: Boolean
+        get() = prefs.getBoolean(KEY_HAS_ONBOARDED, false)
+        set(value) = prefs.edit().putBoolean(KEY_HAS_ONBOARDED, value).apply()
+
+    var prefersDarkMode: Boolean
+        get() = if (prefs.contains(KEY_DARK_MODE)) prefs.getBoolean(KEY_DARK_MODE, true) else true
+        set(value) = prefs.edit().putBoolean(KEY_DARK_MODE, value).apply()
+
     var region: Region
         get() = Region.from(prefs.getString(KEY_REGION, null) ?: Locale.getDefault().country)
         set(value) = prefs.edit().putString(KEY_REGION, value.code).apply()
@@ -128,6 +146,24 @@ class SettingsStore(context: Context) {
     var selectedVehicleIdentifier: String?
         get() = prefs.getString(KEY_SELECTED_VEHICLE, null)
         set(value) = prefs.edit().putString(KEY_SELECTED_VEHICLE, value).apply()
+
+    var garageVehicleIdentifiers: List<String>
+        get() = prefs.getString(KEY_GARAGE_VEHICLES, null)?.let { encoded ->
+            runCatching {
+                json.decodeFromString(GarageVehicleDocument.serializer(), encoded).identifiers
+                    .let(::normalizeGarageVehicleIdentifiers)
+            }.getOrNull()
+        } ?: emptyList()
+        set(value) {
+            val normalized = normalizeGarageVehicleIdentifiers(value)
+            prefs.edit().putString(
+                KEY_GARAGE_VEHICLES,
+                json.encodeToString(
+                    GarageVehicleDocument.serializer(),
+                    GarageVehicleDocument(normalized),
+                ),
+            ).apply()
+        }
 
     var weatherRangeLossPercent: Float
         get() = prefs.getFloat(KEY_WEATHER_LOSS, 0f).coerceIn(0f, 45f)
@@ -212,11 +248,14 @@ class SettingsStore(context: Context) {
         .toSet()
 
     private companion object {
+        const val KEY_HAS_ONBOARDED = "evfr_has_onboarded"
+        const val KEY_DARK_MODE = "evfr_dark_mode"
         const val KEY_REGION = "evfr_region"
         const val KEY_USES_MILES = "evfr_uses_miles"
         const val KEY_NAV = "evfr_preferred_navigation_app"
         const val KEY_SESSION = "evfr_external_navigation_session"
         const val KEY_SELECTED_VEHICLE = "evfr_selected_vehicle"
+        const val KEY_GARAGE_VEHICLES = "evfr_garage_vehicles"
         const val KEY_VEHICLE_OVERRIDES = "evfr_vehicle_overrides"
         const val KEY_WEATHER_LOSS = "evfr_weather_range_loss"
         const val KEY_EXTRA_LOAD = "evfr_extra_load_kg"

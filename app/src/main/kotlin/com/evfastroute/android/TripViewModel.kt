@@ -24,6 +24,7 @@ import com.evfastroute.core.NavigationSession
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.PlaceRanker
 import com.evfastroute.core.RangeDrivingStyle
+import com.evfastroute.core.RangeEstimator
 import com.evfastroute.core.Region
 import com.evfastroute.core.RouteOption
 import com.evfastroute.core.orderedNavigationPoints
@@ -40,11 +41,33 @@ class WaypointField(val id: Int) {
     var searchJob: Job? = null
 }
 
+private fun defaultGaragePresets(): List<EvPreset> {
+    fun closest(make: String, modelPrefix: String, preferredYear: Int): EvPreset? {
+        val candidates = EvCatalog.presets.filter {
+            it.make.equals(make, ignoreCase = true) &&
+                it.model.startsWith(modelPrefix, ignoreCase = true)
+        }
+        return candidates.firstOrNull { it.year == preferredYear }
+            ?: candidates.maxByOrNull { it.year }
+    }
+
+    return listOfNotNull(
+        closest("Tesla", "Model Y Long Range", 2026),
+        closest("Hyundai", "IONIQ 5", 2026),
+        closest("Ford", "Mustang Mach-E", 2025),
+    ).distinctBy(EvPreset::catalogIdentifier).ifEmpty { listOf(EvCatalog.default) }
+}
+
 class TripViewModel(application: Application) : AndroidViewModel(application) {
 
     private val planner = TripPlanner()
     private val settings = SettingsStore(application)
     private val platformGeocoder = PlatformGeocoderClient(application)
+
+    var hasOnboarded by mutableStateOf(settings.hasOnboarded)
+        private set
+    var prefersDarkMode by mutableStateOf(settings.prefersDarkMode)
+        private set
 
     var region by mutableStateOf(settings.region)
         private set
@@ -61,9 +84,24 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var arrivalSuggested by mutableStateOf(false)
         private set
+    var isGuidedNavigationOpen by mutableStateOf(false)
+        private set
+
+    private val starterGarage = defaultGaragePresets()
+    private val initialGarageIdentifiers = normalizeGarageVehicleIdentifiers(
+        listOfNotNull(settings.selectedVehicleIdentifier) +
+            settings.garageVehicleIdentifiers.ifEmpty { starterGarage.map(EvPreset::catalogIdentifier) },
+    )
+
+    var garageVehicleIdentifiers by mutableStateOf(initialGarageIdentifiers)
+        private set
+    val garageVehicles: List<EvPreset>
+        get() = garageVehicleIdentifiers.mapNotNull { EvCatalog.preset(it) }
 
     var selectedPreset by mutableStateOf(
-        EvCatalog.preset(settings.selectedVehicleIdentifier) ?: EvCatalog.default,
+        EvCatalog.preset(settings.selectedVehicleIdentifier)
+            ?: garageVehicles.firstOrNull()
+            ?: EvCatalog.default,
     )
         private set
     private var selectedVehicleOverride by mutableStateOf(
@@ -108,13 +146,14 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var searchMessage: String? by mutableStateOf(null)
         private set
-    private var lastKnownLocation: LatLon? = null
+    var currentLocation by mutableStateOf<LatLon?>(null)
+        private set
 
     val waypoints = mutableStateListOf<WaypointField>()
     val canAddWaypoint: Boolean get() = waypoints.size < MAX_USER_WAYPOINTS
     private var nextWaypointId = 0
 
-    var currentSocPercent by mutableFloatStateOf(80f)
+    var currentSocPercent by mutableFloatStateOf(70f)
         private set
     // Match the iOS safety default; the user can lower it explicitly for a specific trip.
     var arrivalBufferPercent by mutableFloatStateOf(15f)
@@ -143,9 +182,28 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     private var planJob: Job? = null
     private var planGeneration = 0L
 
+    init {
+        if (settings.garageVehicleIdentifiers != garageVehicleIdentifiers) {
+            settings.garageVehicleIdentifiers = garageVehicleIdentifiers
+        }
+        if (settings.selectedVehicleIdentifier != selectedPreset.catalogIdentifier) {
+            settings.selectedVehicleIdentifier = selectedPreset.catalogIdentifier
+        }
+    }
+
     private val baseVehicle
         get() = configuredPreset.toVehicle(european = region.isEuropean)
             .copy(batteryHealthPercent = batteryHealthPercent)
+
+    val estimatedRange: RangeEstimator.Estimate
+        get() = RangeEstimator.estimate(
+            vehicle = baseVehicle,
+            currentBatteryPercent = currentSocPercent.toDouble(),
+            arrivalBufferPercent = arrivalBufferPercent.toDouble(),
+            weatherRangeLossPercent = weatherRangeLossPercent.toDouble(),
+            extraLoadKg = extraLoadKg.toDouble(),
+            drivingStyle = drivingStyle,
+        )
 
     private val planningConditions
         get() = TripPlanner.Conditions(
@@ -167,6 +225,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         startText = text
         start = null
         startSearchJob?.cancel()
+        searchMessage = null
         if (text.isBlank()) {
             startSuggestions = emptyList()
             searchMessage = null
@@ -183,6 +242,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         destinationText = text
         destination = null
         destinationSearchJob?.cancel()
+        searchMessage = null
         if (text.isBlank()) {
             destinationSuggestions = emptyList()
             searchMessage = null
@@ -219,7 +279,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             searchMessage = "Your device returned an invalid location. Try again outdoors."
             return
         }
-        lastKnownLocation = LatLon(latitude, longitude)
+        currentLocation = LatLon(latitude, longitude)
         selectStart(
             PlaceCandidate(
                 placeName = "Current location",
@@ -233,6 +293,25 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reportLocationUnavailable() {
         searchMessage = "Current location is unavailable. Check Location Services or type a start address."
+    }
+
+    fun reportLocationPermissionDenied() {
+        searchMessage = "Location permission wasn't granted. You can still type a starting address."
+    }
+
+    fun swapAddresses() {
+        startSearchJob?.cancel()
+        destinationSearchJob?.cancel()
+        invalidatePlan()
+        val previousStart = start
+        val previousStartText = startText
+        start = destination
+        startText = destinationText
+        destination = previousStart
+        destinationText = previousStartText
+        startSuggestions = emptyList()
+        destinationSuggestions = emptyList()
+        searchMessage = null
     }
 
     fun selectOption(index: Int) {
@@ -268,6 +347,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         field.text = text
         field.selected = null
         field.searchJob?.cancel()
+        searchMessage = null
         if (text.isBlank()) {
             field.suggestions = emptyList()
             return
@@ -304,10 +384,24 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         departureOffsetMinutes = minutes.coerceIn(0, 24 * 60)
     }
 
+    fun completeOnboarding() {
+        hasOnboarded = true
+        settings.hasOnboarded = true
+    }
+
+    fun updateDarkMode(value: Boolean) {
+        prefersDarkMode = value
+        settings.prefersDarkMode = value
+    }
+
     fun showVehiclePicker() { isPickingVehicle = true }
     fun hideVehiclePicker() { isPickingVehicle = false }
     fun showVehicleEditor() { isEditingVehicle = true }
     fun hideVehicleEditor() { isEditingVehicle = false }
+    fun replaceVehicleFromEditor() {
+        isEditingVehicle = false
+        isPickingVehicle = true
+    }
     fun showSettings() { isEditingSettings = true }
     fun hideSettings() { isEditingSettings = false }
     fun showLicenses() { isViewingLicenses = true }
@@ -374,11 +468,38 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectPreset(preset: EvPreset) {
+        if (preset.catalogIdentifier !in garageVehicleIdentifiers) {
+            garageVehicleIdentifiers = normalizeGarageVehicleIdentifiers(
+                listOf(preset.catalogIdentifier) + garageVehicleIdentifiers,
+            )
+            settings.garageVehicleIdentifiers = garageVehicleIdentifiers
+        }
         selectedPreset = preset
         selectedVehicleOverride = settings.vehicleOverride(preset.catalogIdentifier)
         settings.selectedVehicleIdentifier = preset.catalogIdentifier
         isPickingVehicle = false
         invalidatePlan()
+    }
+
+    fun configuredPresetFor(preset: EvPreset): EvPreset =
+        settings.vehicleOverride(preset.catalogIdentifier)?.applyTo(preset) ?: preset
+
+    fun batteryHealthFor(preset: EvPreset): Double =
+        settings.vehicleOverride(preset.catalogIdentifier)?.batteryHealthPercent ?: 100.0
+
+    fun removeGarageVehicle(preset: EvPreset) {
+        if (garageVehicleIdentifiers.size <= 1) return
+        val updated = garageVehicleIdentifiers.filterNot { it == preset.catalogIdentifier }
+        if (updated.size == garageVehicleIdentifiers.size) return
+        garageVehicleIdentifiers = updated
+        settings.garageVehicleIdentifiers = updated
+        if (selectedPreset.catalogIdentifier == preset.catalogIdentifier) {
+            val replacement = updated.firstNotNullOfOrNull { EvCatalog.preset(it) } ?: EvCatalog.default
+            selectedPreset = replacement
+            selectedVehicleOverride = settings.vehicleOverride(replacement.catalogIdentifier)
+            settings.selectedVehicleIdentifier = replacement.catalogIdentifier
+            invalidatePlan()
+        }
     }
 
     fun saveVehicleOverride(
@@ -472,6 +593,10 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         currentSocPercent = snapshot.currentSocPercent.coerceIn(5f, 100f)
         arrivalBufferPercent = snapshot.arrivalBufferPercent.coerceIn(5f, 40f)
         EvCatalog.preset(snapshot.vehicleIdentifier)?.let { preset ->
+            if (preset.catalogIdentifier !in garageVehicleIdentifiers) {
+                garageVehicleIdentifiers = (garageVehicleIdentifiers + preset.catalogIdentifier).distinct()
+                settings.garageVehicleIdentifiers = garageVehicleIdentifiers
+            }
             selectedPreset = preset
             selectedVehicleOverride = settings.vehicleOverride(preset.catalogIdentifier)
             settings.selectedVehicleIdentifier = preset.catalogIdentifier
@@ -505,6 +630,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         val destinationPoint = NavigationPoint(dest.latitude, dest.longitude, dest.placeName, NavigationPoint.Kind.DESTINATION)
         navSession = NavigationSession.create(stops, destinationPoint, app, System.currentTimeMillis())
         arrivalSuggested = false
+        isGuidedNavigationOpen = true
         settings.navigationSession = navSession
     }
 
@@ -517,6 +643,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     fun advanceGuidedTrip() {
         val advanced = navSession?.markCurrentPointComplete() ?: return
         navSession = if (advanced.isComplete) null else advanced
+        if (navSession == null) isGuidedNavigationOpen = false
         arrivalSuggested = false
         settings.navigationSession = navSession
     }
@@ -524,11 +651,16 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     fun endGuidedTrip() {
         navSession = null
         arrivalSuggested = false
+        isGuidedNavigationOpen = false
         settings.navigationSession = null
     }
 
+    fun dismissGuidedNavigation() {
+        isGuidedNavigationOpen = false
+    }
+
     fun onLocationSample(latitude: Double, longitude: Double, accuracyMeters: Double?, sampleMillis: Long) {
-        lastKnownLocation = LatLon(latitude, longitude)
+        currentLocation = LatLon(latitude, longitude)
         val session = navSession ?: return
         if (session.shouldSuggestArrival(latitude, longitude, accuracyMeters, sampleMillis, System.currentTimeMillis())) {
             arrivalSuggested = true
@@ -627,7 +759,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun search(query: String): List<PlaceCandidate> {
         val anchor = start?.let { LatLon(it.latitude, it.longitude) }
             ?: destination?.let { LatLon(it.latitude, it.longitude) }
-            ?: lastKnownLocation
+            ?: currentLocation
             ?: region.searchCenter
 
         val (deviceLocal, photonLocal) = coroutineScope {

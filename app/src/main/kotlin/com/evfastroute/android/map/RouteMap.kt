@@ -46,7 +46,11 @@ private class MapState {
     var route: List<LatLon> = emptyList()
     var chargers: List<LatLon> = emptyList()
     var waypoints: List<LatLon> = emptyList()
-    var endpoints: List<LatLon> = emptyList()
+    var start: LatLon? = null
+    var destination: LatLon? = null
+    var userLocation: LatLon? = null
+    var followUser = false
+    var fallbackCenter = LatLon(37.7749, -122.4194)
     var hasFitted = false
     var loadState by mutableStateOf<MapLoadState>(MapLoadState.LOADING)
 }
@@ -61,6 +65,9 @@ fun RouteMap(
     destination: LatLon?,
     modifier: Modifier = Modifier,
     waypoints: List<LatLon> = emptyList(),
+    fallbackCenter: LatLon = LatLon(37.7749, -122.4194),
+    userLocation: LatLon? = null,
+    followUser: Boolean = false,
 ) {
     val mapView = rememberMapViewWithLifecycle()
     val state = remember { MapState() }
@@ -81,11 +88,21 @@ fun RouteMap(
                 mapView
             },
             update = {
-                if (routeGeometry != state.route) state.hasFitted = false
+                if (
+                    routeGeometry != state.route || chargers != state.chargers ||
+                    waypoints != state.waypoints || start != state.start ||
+                    destination != state.destination || fallbackCenter != state.fallbackCenter
+                ) {
+                    state.hasFitted = false
+                }
                 state.route = routeGeometry
                 state.chargers = chargers
                 state.waypoints = waypoints
-                state.endpoints = listOfNotNull(start, destination)
+                state.start = start
+                state.destination = destination
+                state.fallbackCenter = fallbackCenter
+                state.userLocation = userLocation
+                state.followUser = followUser
                 state.style?.let { applyRoute(it, state.map, state) }
             },
         )
@@ -118,7 +135,7 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
     if (style.getLayer("route-line") == null) {
         style.addLayer(
             LineLayer("route-line", "route").withProperties(
-                PropertyFactory.lineColor("#00B3A4"),
+                PropertyFactory.lineColor("#5BE3DC"),
                 PropertyFactory.lineWidth(5f),
             ),
         )
@@ -128,7 +145,7 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
     if (style.getLayer("charger-points") == null) {
         style.addLayer(
             CircleLayer("charger-points", "chargers").withProperties(
-                PropertyFactory.circleColor("#00B3A4"),
+                PropertyFactory.circleColor("#5BE3DC"),
                 PropertyFactory.circleRadius(6f),
                 PropertyFactory.circleStrokeColor("#FFFFFF"),
                 PropertyFactory.circleStrokeWidth(2f),
@@ -148,11 +165,11 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
         )
     }
 
-    upsertSource(style, "endpoints", pointCollection(state.endpoints))
-    if (style.getLayer("endpoint-points") == null) {
+    upsertSource(style, "start-point", pointCollection(listOfNotNull(state.start)))
+    if (style.getLayer("start-point-layer") == null) {
         style.addLayer(
-            CircleLayer("endpoint-points", "endpoints").withProperties(
-                PropertyFactory.circleColor("#1E6FEB"),
+            CircleLayer("start-point-layer", "start-point").withProperties(
+                PropertyFactory.circleColor("#5BE3DC"),
                 PropertyFactory.circleRadius(7f),
                 PropertyFactory.circleStrokeColor("#FFFFFF"),
                 PropertyFactory.circleStrokeWidth(2f),
@@ -160,13 +177,66 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
         )
     }
 
+    upsertSource(style, "destination-point", pointCollection(listOfNotNull(state.destination)))
+    if (style.getLayer("destination-point-layer") == null) {
+        style.addLayer(
+            CircleLayer("destination-point-layer", "destination-point").withProperties(
+                PropertyFactory.circleColor("#59C9F3"),
+                PropertyFactory.circleRadius(7f),
+                PropertyFactory.circleStrokeColor("#FFFFFF"),
+                PropertyFactory.circleStrokeWidth(2f),
+            ),
+        )
+    }
+
+    upsertSource(style, "user-location", pointCollection(listOfNotNull(state.userLocation)))
+    if (style.getLayer("user-location-layer") == null) {
+        style.addLayer(
+            CircleLayer("user-location-layer", "user-location").withProperties(
+                PropertyFactory.circleColor("#FFFFFF"),
+                PropertyFactory.circleRadius(8f),
+                PropertyFactory.circleStrokeColor("#2979FF"),
+                PropertyFactory.circleStrokeWidth(4f),
+            ),
+        )
+    }
+
+    if (state.followUser) {
+        state.userLocation?.let { point ->
+            map?.easeCamera(
+                CameraUpdateFactory.newLatLngZoom(LatLng(point.latitude, point.longitude), 14.5),
+            )
+            state.hasFitted = true
+        }
+    }
+
     // Fit once to the whole route.
-    val all = state.route + state.chargers + state.waypoints + state.endpoints
-    if (!state.hasFitted && all.size > 1 && map != null) {
-        val bounds = LatLngBounds.Builder()
-        all.forEach { bounds.include(LatLng(it.latitude, it.longitude)) }
-        runCatching { map.easeCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 80)) }
-            .onSuccess { state.hasFitted = true }
+    val all = state.route + state.chargers + state.waypoints + listOfNotNull(state.start, state.destination)
+    if (!state.hasFitted && map != null) {
+        when {
+            all.size > 1 -> {
+                val bounds = LatLngBounds.Builder()
+                all.forEach { bounds.include(LatLng(it.latitude, it.longitude)) }
+                runCatching { map.easeCamera(CameraUpdateFactory.newLatLngBounds(bounds.build(), 80)) }
+                    .onSuccess { state.hasFitted = true }
+            }
+            all.size == 1 -> {
+                val point = all.first()
+                map.easeCamera(CameraUpdateFactory.newLatLngZoom(LatLng(point.latitude, point.longitude), 11.0))
+                state.hasFitted = true
+            }
+            else -> {
+                // Match the iOS planner's neutral pre-search hero while avoiding MapLibre's
+                // default whole-world camera. The first selected/current point replaces it.
+                map.moveCamera(
+                    CameraUpdateFactory.newLatLngZoom(
+                        LatLng(state.fallbackCenter.latitude, state.fallbackCenter.longitude),
+                        9.5,
+                    ),
+                )
+                state.hasFitted = true
+            }
+        }
     }
 }
 

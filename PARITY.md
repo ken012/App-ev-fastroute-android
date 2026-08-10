@@ -12,6 +12,7 @@ ported/tested planning logic, but use different map/search/routing providers whe
 | Search | MKLocalSearch | Android device geocoder + Photon + shared ranker | Photon public demo has no SLA |
 | Chargers | Open Charge Map | Open Charge Map | `compact=false`, `opendata=true`, provider attribution shown |
 | Storage | UserDefaults | app-private SharedPreferences | Android cloud/device-transfer backup disabled |
+| Product shell | SwiftUI branded shell | Compose branded shell | Same onboarding and Plan/Route/Garage/Settings information architecture |
 | Navigation | Apple/Google/Waze handoff | Google/Waze/default-app handoff | Waze/default are sequential stop-by-stop |
 
 ## Shared/ported behavior
@@ -29,21 +30,27 @@ ported/tested planning logic, but use different map/search/routing providers whe
 | Search relevance/proximity/typos/dedup/broadening | `PlaceRanker` | JVM tests |
 | Route geometry/corridor segmentation | strict ORS parsing + route covering boxes | JVM tests |
 | Google/Waze/default deep links | UTF-8-safe coordinate-first URLs | JVM tests |
-| Guided external-navigation progress | expiring `NavigationSession` + foreground arrival prompt | JVM tests + UI smoke |
-| Saved trips, vehicle overrides, filters, settings | `SettingsStore` | serialization/runtime smoke |
+| Guided navigation progress | full-map trip screen + expiring `NavigationSession` + foreground arrival prompt | JVM tests + UI smoke |
+| Onboarding, garage, saved trips, vehicle overrides, filters, settings | `SettingsStore` | serialization/runtime smoke |
 
 ## Android app capabilities
 
-- Start/destination search, current location, ordered user waypoints, reorder/remove.
-- Vehicle picker, per-vehicle editable battery/consumption/DC power/connectors/battery health.
+- iOS-matched dark glass visual system, first-run onboarding, and four primary tabs: Plan, Route,
+  Garage, and Settings. Native permission dialogs and the platform map renderer remain Android-native.
+- Full-screen start/destination/stop search, current location, ordered user waypoints, swap,
+  reorder, and remove.
+- Persistent multi-vehicle Garage, searchable vehicle picker, and per-vehicle editable
+  battery/consumption/DC power/connectors/battery health.
 - Weather loss, passenger/cargo, driving-style range assumptions.
 - Minimum charging speed, preferred/avoided networks, optional low-confidence exclusion.
 - Live charging-station corridor retrieval in bounded overlapping boxes with success-only caches.
 - Route option cards, deduplicated-objective badges, map line/pins, arrival battery/timeline, known
   single-currency cost only, provider-specific OCM licensing, and visible safety disclosure.
 - Manual and five-minute-on-resume route refresh (suppressed during an active guided trip).
+- Full-map guided-trip screen with live foreground position/follow marker, ETA, next-stop progress,
+  arrival confirmation, and safe handoff to the selected turn-by-turn app.
 - Full Google trip where the documented waypoint cap permits; safe sequential sessions otherwise.
-- Adaptive launcher icon, edge-to-edge/dark theme, API 26 minimum, API 36 target, R8 release build,
+- Adaptive launcher icon, edge-to-edge dark/light themes, API 26 minimum, API 36 target, R8 release build,
   16 KB native-library CI check, unit/lint/build gate, and emulator launch smoke test.
 
 ## Deliberate differences / remaining product work
@@ -55,6 +62,8 @@ ported/tested planning logic, but use different map/search/routing providers whe
   with a built-in fallback if it fails. Measure cold start on release devices before expanding it.
 - Android launches in English only. Localization is a separate product milestone before marketing
   to non-English audiences.
+- Pixel-for-pixel equality is not claimed for OS-owned surfaces: Android permission dialogs,
+  keyboard, map labels/gestures, and external navigation apps retain their native behavior.
 - The bounded beam search reports “fewest charging sessions found among verified candidates,” not a
   mathematical proof over every station on earth. Every minimum-count candidate retained by the
   bounded search is road-verified before a longer candidate can receive the label.

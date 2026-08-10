@@ -6,6 +6,10 @@ The planner uses editable public vehicle specifications, real-world range assump
 optimized charging sequence, multi-stop visits, traffic-free ETA/SOC timelines, and external
 Google Maps/Waze/default-map handoff.
 
+The app-owned Android experience mirrors the iOS product shell: branded onboarding, the dark glass
+visual system, full-screen place search, and Plan, Route, Garage, and Settings tabs. Platform-owned
+permission dialogs, the MapLibre renderer, and external navigation apps remain native to Android.
+
 ## Modules
 
 - `:core` — deterministic routing, energy, range, search ranking, catalog, charger parsing/scoring,
