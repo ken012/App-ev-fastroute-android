@@ -3,7 +3,6 @@ package com.evfastroute.android
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -13,31 +12,17 @@ import androidx.compose.ui.unit.sp
 
 internal val EvMint = Color(0xFF5BE3DC)
 internal val EvCyan = Color(0xFF59C9F3)
+internal val EvIndigo = Color(0xFF5969D8)
+internal val EvSuccess = Color(0xFF75E68A)
 internal val EvBackgroundTop = Color(0xFF050A14)
-internal val EvBackgroundMiddle = Color(0xFF061C24)
-internal val EvBackgroundBottom = Color(0xFF000509)
+// These two values are the exact 8-bit sRGB equivalents of AppBackground on iOS
+// (0.02, 0.10, 0.13) and (0.00, 0.02, 0.04), respectively.
+internal val EvBackgroundMiddle = Color(0xFF051A21)
+internal val EvBackgroundBottom = Color(0xFF00050A)
 internal val EvGlass = Color(0xFF1C2225)
 internal val EvGlassStrong = Color(0xFF23292C)
 internal val EvMuted = Color(0xFF9AA2AA)
 internal val EvDivider = Color(0x337D9296)
-
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF006B68),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFF8FF3ED),
-    onPrimaryContainer = Color(0xFF00201F),
-    secondary = Color(0xFF006783),
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFBCE9FF),
-    onSecondaryContainer = Color(0xFF001F2A),
-    background = Color(0xFFF4FAFA),
-    onBackground = Color(0xFF101718),
-    surface = Color(0xFFF7FBFB),
-    onSurface = Color(0xFF101718),
-    surfaceVariant = Color(0xFFE4ECEC),
-    onSurfaceVariant = Color(0xFF526063),
-    error = Color(0xFFBA1A1A),
-)
 
 private val DarkColors = darkColorScheme(
     primary = EvMint,
@@ -139,9 +124,9 @@ private val AppTypography = Typography(
 )
 
 @Composable
-fun EvFastRouteTheme(darkTheme: Boolean = true, content: @Composable () -> Unit) {
+fun EvFastRouteTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = DarkColors,
         typography = AppTypography,
         content = content,
     )

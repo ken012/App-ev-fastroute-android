@@ -145,7 +145,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.maplibre.gl:android-sdk:13.4.1")
+    // OpenGL ES is MapLibre's widest-compatibility stable renderer. The default
+    // artifact uses Vulkan in v13 and would exclude devices without Vulkan 1.0.
+    implementation("org.maplibre.gl:android-sdk-opengl:13.4.1")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.08.00"))

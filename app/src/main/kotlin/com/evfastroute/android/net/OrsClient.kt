@@ -24,6 +24,10 @@ object OrsClient {
         if (key.isBlank()) {
             return ServiceResult.Failure(ServiceFailure(ServiceFailureKind.CONFIGURATION))
         }
+        val endpoint = configuredHttpsUrl(
+            BuildConfig.ORS_BASE_URL,
+            "v2/directions/driving-car/geojson",
+        ) ?: return ServiceResult.Failure(ServiceFailure(ServiceFailureKind.CONFIGURATION))
 
         val cacheKey = listOf(fromLat, fromLon, toLat, toLon)
             .joinToString(",") { String.format(java.util.Locale.US, "%.5f", it) }
@@ -31,7 +35,7 @@ object OrsClient {
 
         val body = OpenRouteService.requestBody(fromLat, fromLon, toLat, toLon).toRequestBody(jsonMedia)
         val request = Request.Builder()
-            .url("${BuildConfig.ORS_BASE_URL.trimEnd('/')}/v2/directions/driving-car/geojson")
+            .url(endpoint)
             .addHeader("Authorization", key)
             .addHeader("Accept", "application/geo+json, application/json")
             .addHeader("User-Agent", "EVFastRoute-Android/${BuildConfig.VERSION_NAME}")

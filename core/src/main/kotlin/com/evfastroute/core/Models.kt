@@ -4,7 +4,10 @@ package com.evfastroute.core
 // Charger / Vehicle / ConnectorType surface (only the fields the routing/charging intelligence
 // uses). Richer UI-facing fields (make/model/catalog, live status text, …) live in the :app layer.
 
-enum class ConnectorType { CCS, CCS2, CHADEMO, NACS, TYPE2, J1772, OTHER }
+// Keep this set identical to iOS `ConnectorType`. These are the connector standards the
+// road-trip planner can verify against Open Charge Map; unsupported/unknown catalog tokens are
+// rejected rather than becoming an Android-only compatibility choice.
+enum class ConnectorType { CCS, CCS2, NACS, CHADEMO, TYPE2 }
 
 enum class ChargerStatus { AVAILABLE, BUSY, LIMITED, OFFLINE }
 
@@ -28,6 +31,8 @@ data class Charger(
     /** Null means OCM did not publish an unambiguous per-kWh rate. Unknown is never treated as free. */
     val pricePerKwh: Double? = null,
     val priceCurrencyCode: String? = null,
+    /** Provider's human-readable usage-cost text, retained for station details. */
+    val usageCostText: String? = null,
     val detourMinutes: Int = 0,
     val region: String = "",
     val dataSource: ChargerDataSource = ChargerDataSource.OPEN_CHARGE_MAP,

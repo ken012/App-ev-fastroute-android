@@ -4,7 +4,7 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 // Pure routing orchestration. Given a charger sequence and the per-leg distances/durations that
-// the routing service (OpenRouteService on Android, MKDirections on iOS) returns, it walks the
+// the shared OpenRouteService contract returns, it walks the
 // state-of-charge to build a RouteOption; and given several built candidates it selects the best
 // per objective and merges duplicates. Network I/O lives in the :app service clients; this stays
 // pure and test-verified against the iOS behavior.
@@ -34,6 +34,7 @@ object RoutePlanner {
         currentSOC: Double,
         arrivalBufferPercent: Double,
         legGeometries: List<List<LatLon>> = emptyList(),
+        legSteps: List<List<DrivingStep>> = emptyList(),
     ): RouteOption? {
         if (legDistancesKm.size != sequence.size + 1 || legDurationMinutes.size != sequence.size + 1) return null
         val capacity = maxOf(1.0, vehicle.batteryCapacityKwh)
@@ -89,6 +90,19 @@ object RoutePlanner {
                 ChargingStop(
                     chargerId = charger.id, name = charger.name,
                     latitude = charger.latitude, longitude = charger.longitude,
+                    network = charger.network,
+                    connectorTypes = charger.connectorTypes,
+                    maxKw = charger.maxKw,
+                    numberOfStalls = charger.numberOfStalls,
+                    availableStalls = charger.availableStalls,
+                    status = charger.status,
+                    reliabilityScore = charger.reliabilityScore,
+                    pricePerKwh = charger.pricePerKwh,
+                    priceCurrencyCode = charger.priceCurrencyCode,
+                    usageCostText = charger.usageCostText,
+                    detourMinutes = charger.detourMinutes,
+                    region = charger.region,
+                    dataSource = charger.dataSource,
                     arrivalBatteryPercent = arrivalInt, targetBatteryPercent = targetInt,
                     chargeDurationMinutes = minutes,
                     dataProviderTitle = charger.dataProviderTitle,
@@ -125,7 +139,12 @@ object RoutePlanner {
             geometry = legGeometries.flatten(),
             estimatedChargingCostValue = if (sequence.isNotEmpty() && hasCompleteCost) totalCost else null,
             estimatedChargingCostCurrencyCode = if (sequence.isNotEmpty() && hasCompleteCost) costCurrency else null,
+            estimatedCostText = if (sequence.isNotEmpty() && hasCompleteCost && costCurrency != null) {
+                "${currencySymbol(costCurrency)}${"%.2f".format(java.util.Locale.US, totalCost)}"
+            } else null,
+            estimatedConsumptionKwhPer100Km = vehicle.efficiencyKwhPerKm * 100.0,
             stopSegmentIndices = sequence.indices.toList(),
+            routeSteps = indexedSteps(legSteps),
         )
     }
 
@@ -149,6 +168,7 @@ object RoutePlanner {
         currentSOC: Double,
         arrivalBufferPercent: Double,
         legGeometries: List<List<LatLon>> = emptyList(),
+        legSteps: List<List<DrivingStep>> = emptyList(),
     ): RouteOption? {
         if (legDistancesKm.size != vias.size + 1 || legDurationMinutes.size != vias.size + 1) return null
         val capacity = maxOf(1.0, vehicle.batteryCapacityKwh)
@@ -222,6 +242,19 @@ object RoutePlanner {
                 ChargingStop(
                     chargerId = charger.id, name = charger.name,
                     latitude = charger.latitude, longitude = charger.longitude,
+                    network = charger.network,
+                    connectorTypes = charger.connectorTypes,
+                    maxKw = charger.maxKw,
+                    numberOfStalls = charger.numberOfStalls,
+                    availableStalls = charger.availableStalls,
+                    status = charger.status,
+                    reliabilityScore = charger.reliabilityScore,
+                    pricePerKwh = charger.pricePerKwh,
+                    priceCurrencyCode = charger.priceCurrencyCode,
+                    usageCostText = charger.usageCostText,
+                    detourMinutes = charger.detourMinutes,
+                    region = charger.region,
+                    dataSource = charger.dataSource,
                     arrivalBatteryPercent = arrivalInt, targetBatteryPercent = targetInt,
                     chargeDurationMinutes = minutes,
                     dataProviderTitle = charger.dataProviderTitle,
@@ -259,25 +292,41 @@ object RoutePlanner {
             geometry = legGeometries.flatten(),
             estimatedChargingCostValue = if (chargerCount > 0 && hasCompleteCost) totalCost else null,
             estimatedChargingCostCurrencyCode = if (chargerCount > 0 && hasCompleteCost) costCurrency else null,
+            estimatedCostText = if (chargerCount > 0 && hasCompleteCost && costCurrency != null) {
+                "${currencySymbol(costCurrency)}${"%.2f".format(java.util.Locale.US, totalCost)}"
+            } else null,
+            estimatedConsumptionKwhPer100Km = vehicle.efficiencyKwhPerKm * 100.0,
             stopSegmentIndices = stopSegmentIndices,
             userWaypoints = userWaypoints,
             userWaypointSegmentIndices = userWaypointSegmentIndices.toList(),
+            routeSteps = indexedSteps(legSteps),
         )
     }
 
     /** Picks the best candidate per user objective and merges options that share a charger sequence. */
     fun optimize(candidates: List<RouteOption>): List<RouteOption> {
         val selected = mutableListOf<RouteOption>()
+        val comparableCostCurrency = comparableCostCurrency(candidates)
         for (objective in RouteObjective.plannerCases) {
-            if (objective == RouteObjective.LOWEST_COST &&
-                candidates.none { it.estimatedChargingCostValue != null }
-            ) {
+            if (objective == RouteObjective.LOWEST_COST && comparableCostCurrency == null) {
                 continue
             }
             val best = candidates.minWithOrNull(comparator(objective)) ?: continue
             selected.add(labeled(best, objective))
         }
         return deduplicatedOptions(selected)
+    }
+
+    /**
+     * A numeric price is meaningful only beside its ISO currency. Do not rank USD, CAD, EUR, etc.
+     * against one another without a live exchange-rate source, and do not trust legacy/incomplete
+     * candidates that carry a number without a currency code.
+     */
+    private fun comparableCostCurrency(candidates: List<RouteOption>): String? {
+        val priced = candidates.filter { it.estimatedChargingCostValue != null }
+        if (priced.isEmpty() || priced.any { it.estimatedChargingCostCurrencyCode.isNullOrBlank() }) return null
+        val currencies = priced.map { it.estimatedChargingCostCurrencyCode!!.uppercase() }.toSet()
+        return currencies.singleOrNull()
     }
 
     fun deduplicatedOptions(options: List<RouteOption>): List<RouteOption> {
@@ -309,6 +358,20 @@ object RoutePlanner {
 
     private fun sequenceKey(option: RouteOption): String =
         ChargerScoring.sequenceKey(option.chargingStops.map { it.chargerId })
+
+    private fun currencySymbol(code: String): String = when (code) {
+        "USD", "CAD", "AUD", "NZD" -> "$"
+        "EUR" -> "€"
+        "GBP" -> "£"
+        "NOK", "SEK" -> "kr"
+        "CHF" -> "CHF"
+        else -> "$code "
+    }
+
+    private fun indexedSteps(legs: List<List<DrivingStep>>): List<DrivingStep> =
+        legs.flatMapIndexed { segmentIndex, steps ->
+            steps.map { it.copy(segmentIndex = segmentIndex) }
+        }
 
     private fun comparator(objective: RouteObjective): Comparator<RouteOption> {
         fun tieBreak(a: RouteOption, b: RouteOption): Int {

@@ -1,8 +1,10 @@
 package com.evfastroute.android
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -30,10 +32,15 @@ class MainActivitySmokeTest {
         compose.onNodeWithText("Trip Planner").assertIsDisplayed()
         compose.onNodeWithText("Start").assertIsDisplayed()
         compose.onNodeWithText("Destination").assertIsDisplayed()
+        compose.onNodeWithTag("planner_list").performScrollToNode(hasTestTag("schedule_departure_toggle"))
+        compose.onNodeWithTag("schedule_departure_toggle").performClick()
+        compose.onNodeWithTag("leave_at_picker").assertIsDisplayed()
         compose.onNodeWithTag("planner_list").performScrollToNode(hasText("Find Fastest Route"))
         compose.onNodeWithText("Find Fastest Route").assertIsDisplayed()
 
         compose.onNodeWithTag("tab_garage").performClick()
         compose.onNodeWithText("Garage").assertIsDisplayed()
+        compose.onAllNodes(hasTestTag("edit_vehicle"))[0].performClick()
+        compose.onNodeWithTag("vehicle_year").assertIsDisplayed()
     }
 }

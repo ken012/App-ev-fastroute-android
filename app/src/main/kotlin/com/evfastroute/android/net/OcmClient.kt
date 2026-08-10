@@ -3,7 +3,6 @@ package com.evfastroute.android.net
 import com.evfastroute.android.BuildConfig
 import com.evfastroute.core.Charger
 import com.evfastroute.core.OpenChargeMap
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 
 // Open Charge Map live charger fetch. Same API as iOS; no key → empty (routing then fails closed,
@@ -24,20 +23,19 @@ object OcmClient {
         if (key.isBlank()) {
             return ServiceResult.Failure(ServiceFailure(ServiceFailureKind.CONFIGURATION))
         }
+        val endpoint = configuredHttpsUrl(BuildConfig.OCM_BASE_URL, "poi")
+            ?: return ServiceResult.Failure(ServiceFailure(ServiceFailureKind.CONFIGURATION))
 
         val cacheKey = listOf(minLat, minLon, maxLat, maxLon)
             .joinToString(",") { String.format(java.util.Locale.US, "%.4f", it) } + ":$maxResults"
         cache.get(cacheKey)?.let { return ServiceResult.Success(it) }
 
         val boundingBox = "($maxLat,$minLon),($minLat,$maxLon)"
-        val url = "${BuildConfig.OCM_BASE_URL.trimEnd('/')}/poi".toHttpUrl().newBuilder()
+        val url = endpoint.newBuilder()
             .addQueryParameter("output", "json")
             .addQueryParameter("maxresults", maxResults.coerceIn(1, 500).toString())
             .addQueryParameter("boundingbox", boundingBox)
-            .addQueryParameter("compact", "false")
-            // OCM POIs carry provider-specific licenses. Restrict public-product results to
-            // providers OCM marks as open-data licensed; broader imports require legal review.
-            .addQueryParameter("opendata", "true")
+            .addQueryParameter("minpowerkw", "25")
             .build()
 
         val request = Request.Builder()

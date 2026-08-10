@@ -54,6 +54,7 @@ class LocationProvider(private val context: Context) {
 
     /** Best recent device fix for "Use current location"; otherwise waits for one fresh sample. */
     @SuppressLint("MissingPermission")
+    @Suppress("DEPRECATION") // Required fallback for the app's supported API 26–29 devices.
     fun oneShot(
         onSample: (latitude: Double, longitude: Double, accuracyMeters: Double?, sampleMillis: Long) -> Unit,
         onUnavailable: () -> Unit,

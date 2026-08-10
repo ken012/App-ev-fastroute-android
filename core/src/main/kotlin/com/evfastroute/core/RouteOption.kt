@@ -12,6 +12,19 @@ data class ChargingStop(
     val arrivalBatteryPercent: Int,
     val targetBatteryPercent: Int,
     val chargeDurationMinutes: Int,
+    val network: String = "Unknown network",
+    val connectorTypes: List<ConnectorType> = emptyList(),
+    val maxKw: Int = 0,
+    val numberOfStalls: Int = 0,
+    val availableStalls: Int? = null,
+    val status: ChargerStatus = ChargerStatus.LIMITED,
+    val reliabilityScore: Double = 50.0,
+    val pricePerKwh: Double? = null,
+    val priceCurrencyCode: String? = null,
+    val usageCostText: String? = null,
+    val detourMinutes: Int = 0,
+    val region: String = "",
+    val dataSource: ChargerDataSource = ChargerDataSource.OPEN_CHARGE_MAP,
     val dataProviderTitle: String? = null,
     val dataProviderLicense: String? = null,
     val dataProviderWebsiteUrl: String? = null,
@@ -46,6 +59,8 @@ data class RouteOption(
     val estimatedChargingCostValue: Double? = null,
     val estimatedChargingCostCurrencyCode: String? = null,
     val estimatedCostText: String? = null,
+    /** Conservative route- and condition-adjusted consumption used by the SOC planner. */
+    val estimatedConsumptionKwhPer100Km: Double? = null,
     /** Drive-segment index at whose end each charging stop is reached. Aligned to [chargingStops].
      * Because user waypoints add extra segments, these are the interleaved positions, not 0..n. */
     val stopSegmentIndices: List<Int> = emptyList(),
@@ -53,4 +68,9 @@ data class RouteOption(
     val userWaypoints: List<PlaceCandidate> = emptyList(),
     /** Drive-segment index at whose end each user waypoint is reached. Aligned to [userWaypoints]. */
     val userWaypointSegmentIndices: List<Int> = emptyList(),
+    /** Absolute departure captured when this option was calculated. Keeping it on the result
+     * prevents a scheduled itinerary from drifting every time the results screen recomposes. */
+    val plannedDepartureMillis: Long? = null,
+    /** ORS maneuvers for the exact driven route, with segment indices matching stop mappings. */
+    val routeSteps: List<DrivingStep> = emptyList(),
 )

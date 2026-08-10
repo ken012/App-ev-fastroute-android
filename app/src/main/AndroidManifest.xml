@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- Location improves nearby search and foreground guidance but is not required: users can
+         plan by typing places and hand the route to an external navigator. Avoid Play filtering
+         otherwise-compatible tablets/Chromebooks that do not advertise location hardware. -->
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
     <application
         android:name=".EvApp"
         android:allowBackup="false"

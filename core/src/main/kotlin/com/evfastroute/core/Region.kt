@@ -42,6 +42,18 @@ enum class Region(val code: String, val displayName: String) {
         else -> listOf(ConnectorType.CCS2, ConnectorType.TYPE2)
     }
 
+    /** Charging networks used to seed a fresh regional profile. Keep this byte-for-byte aligned
+     * with iOS `Region.defaultNetworks`: preferred-network scoring can otherwise select a
+     * different charging sequence for the same trip. */
+    val defaultNetworks: Set<String> get() = when (this) {
+        US, CA -> setOf("Tesla Supercharger", "Electrify America", "ChargePoint", "EVgo")
+        GB -> setOf("Tesla", "Ionity", "Shell Recharge", "Fastned", "InstaVolt", "Gridserve")
+        DE, FR, NL -> setOf("Ionity", "Fastned", "Allego", "Tesla", "Shell Recharge")
+        NO, SE -> setOf("Ionity", "Tesla", "Fastned", "Allego", "Recharge")
+        CH -> setOf("Ionity", "Tesla", "Shell Recharge", "Fastned")
+        IT, ES -> setOf("Ionity", "Tesla", "Enel X", "Iberdrola", "Allego")
+    }
+
     /** Regional search fallback used only until the device supplies a location or trip anchor. */
     val searchCenter: LatLon get() = when (this) {
         US -> LatLon(39.8283, -98.5795)
@@ -73,4 +85,11 @@ object Units {
 
     fun formatDistance(km: Double, usesMiles: Boolean): String =
         if (usesMiles) "${(km * 0.62137).toInt()} mi" else "${km.toInt()} km"
+
+    fun formatConsumption(kwhPer100Km: Double, usesMiles: Boolean): String =
+        if (usesMiles) {
+            String.format(java.util.Locale.US, "%.1f kWh/100 mi", kwhPer100Km * 1.60934)
+        } else {
+            String.format(java.util.Locale.US, "%.1f kWh/100 km", kwhPer100Km)
+        }
 }

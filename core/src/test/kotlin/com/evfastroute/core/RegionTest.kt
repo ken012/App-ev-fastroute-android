@@ -46,6 +46,14 @@ class RegionTest {
         assertEquals("€", Region.DE.currencySymbol)
         assertEquals(listOf(ConnectorType.CCS, ConnectorType.NACS), Region.US.defaultConnectors)
         assertEquals(listOf(ConnectorType.CCS2, ConnectorType.TYPE2), Region.FR.defaultConnectors)
+        assertEquals(
+            setOf("Tesla Supercharger", "Electrify America", "ChargePoint", "EVgo"),
+            Region.CA.defaultNetworks,
+        )
+        assertEquals(
+            setOf("Ionity", "Fastned", "Allego", "Tesla", "Shell Recharge"),
+            Region.DE.defaultNetworks,
+        )
     }
 
     @Test
@@ -59,5 +67,11 @@ class RegionTest {
         assertEquals("62 mi", Units.formatDistance(100.0, usesMiles = true))
         assertEquals("km", Units.label(false))
         assertEquals("mi", Units.label(true))
+    }
+
+    @Test
+    fun consumptionFormatsInChosenUnits() {
+        assertEquals("20.0 kWh/100 km", Units.formatConsumption(20.0, usesMiles = false))
+        assertEquals("32.2 kWh/100 mi", Units.formatConsumption(20.0, usesMiles = true))
     }
 }

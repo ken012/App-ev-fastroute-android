@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -33,6 +34,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Calendar
+import java.util.UUID
 
 class WaypointField(val id: Int) {
     var text by mutableStateOf("")
@@ -40,6 +43,8 @@ class WaypointField(val id: Int) {
     var suggestions by mutableStateOf<List<PlaceCandidate>>(emptyList())
     var searchJob: Job? = null
 }
+
+enum class InformationPage { PRIVACY, TERMS, ABOUT }
 
 private fun defaultGaragePresets(): List<EvPreset> {
     fun closest(make: String, modelPrefix: String, preferredYear: Int): EvPreset? {
@@ -63,12 +68,14 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     private val planner = TripPlanner()
     private val settings = SettingsStore(application)
     private val platformGeocoder = PlatformGeocoderClient(application)
+    private var customVehicleRecords by mutableStateOf(settings.customVehicles)
+
+    private fun presetForIdentifier(identifier: String?): EvPreset? =
+        customVehicleRecords.firstOrNull { it.identifier == identifier }?.toPreset()
+            ?: EvCatalog.preset(identifier)
 
     var hasOnboarded by mutableStateOf(settings.hasOnboarded)
         private set
-    var prefersDarkMode by mutableStateOf(settings.prefersDarkMode)
-        private set
-
     var region by mutableStateOf(settings.region)
         private set
     var usesMiles by mutableStateOf(settings.usesMiles)
@@ -79,6 +86,8 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var isViewingLicenses by mutableStateOf(false)
         private set
+    var informationPage by mutableStateOf<InformationPage?>(null)
+        private set
 
     var navSession by mutableStateOf(settings.navigationSession)
         private set
@@ -86,6 +95,16 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var isGuidedNavigationOpen by mutableStateOf(false)
         private set
+    var activeNavigationRoute by mutableStateOf<RouteOption?>(null)
+        private set
+    var navigationOrigin by mutableStateOf<LatLon?>(null)
+        private set
+    var isRerouting by mutableStateOf(false)
+        private set
+    var navigationError by mutableStateOf<String?>(null)
+        private set
+    private var navigationBaselineBatteryPercent = 70.0
+    private var navigationBaselineStartedAtMillis = 0L
 
     private val starterGarage = defaultGaragePresets()
     private val initialGarageIdentifiers = normalizeGarageVehicleIdentifiers(
@@ -96,10 +115,10 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     var garageVehicleIdentifiers by mutableStateOf(initialGarageIdentifiers)
         private set
     val garageVehicles: List<EvPreset>
-        get() = garageVehicleIdentifiers.mapNotNull { EvCatalog.preset(it) }
+        get() = garageVehicleIdentifiers.mapNotNull(::presetForIdentifier)
 
     var selectedPreset by mutableStateOf(
-        EvCatalog.preset(settings.selectedVehicleIdentifier)
+        presetForIdentifier(settings.selectedVehicleIdentifier)
             ?: garageVehicles.firstOrNull()
             ?: EvCatalog.default,
     )
@@ -108,14 +127,30 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         settings.vehicleOverride(selectedPreset.catalogIdentifier),
     )
     val configuredPreset: EvPreset
-        get() = selectedVehicleOverride?.applyTo(selectedPreset) ?: selectedPreset
+        get() = selectedVehicleOverride?.applyTo(selectedPreset)
+            ?: selectedPreset.copy(connectorTypes = selectedPreset.connectorTypes(region.isEuropean))
     val batteryHealthPercent: Double
         get() = selectedVehicleOverride?.batteryHealthPercent ?: 100.0
+    val defaultArrivalBufferPercent: Int
+        get() = selectedVehicleOverride?.defaultArrivalBufferPercent ?: 15
 
     var isPickingVehicle by mutableStateOf(false)
         private set
     var isEditingVehicle by mutableStateOf(false)
         private set
+    var isCreatingVehicle by mutableStateOf(false)
+        private set
+    var pickerShowsGarageOnly by mutableStateOf(false)
+        private set
+    var editorHasCatalogSeed by mutableStateOf(false)
+        private set
+    var editorSeedRevision by mutableIntStateOf(0)
+        private set
+    private var editorOriginalIdentifier: String? = null
+    private var editorReturnPreset: EvPreset? = null
+    private var editorReturnOverride: VehicleOverride? = null
+    private var editorRestoresSelectionAfterSave = false
+    private var pickerReturnsToEditor = false
 
     var weatherRangeLossPercent by mutableFloatStateOf(settings.weatherRangeLossPercent)
         private set
@@ -148,6 +183,8 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var currentLocation by mutableStateOf<LatLon?>(null)
         private set
+    var currentLocationAccuracyMeters by mutableStateOf<Double?>(null)
+        private set
 
     val waypoints = mutableStateListOf<WaypointField>()
     val canAddWaypoint: Boolean get() = waypoints.size < MAX_USER_WAYPOINTS
@@ -156,9 +193,11 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     var currentSocPercent by mutableFloatStateOf(70f)
         private set
     // Match the iOS safety default; the user can lower it explicitly for a specific trip.
-    var arrivalBufferPercent by mutableFloatStateOf(15f)
+    var arrivalBufferPercent by mutableFloatStateOf(settings.arrivalBufferPercent)
         private set
-    var departureOffsetMinutes by mutableIntStateOf(0)
+    var useScheduledDeparture by mutableStateOf(false)
+        private set
+    var scheduledDepartureMillis by mutableLongStateOf(System.currentTimeMillis() + 5 * 60_000L)
         private set
 
     var options by mutableStateOf<List<RouteOption>>(emptyList())
@@ -180,6 +219,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     private var startSearchJob: Job? = null
     private var destinationSearchJob: Job? = null
     private var planJob: Job? = null
+    private var rerouteJob: Job? = null
     private var planGeneration = 0L
 
     init {
@@ -192,7 +232,9 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val baseVehicle
-        get() = configuredPreset.toVehicle(european = region.isEuropean)
+        // `configuredPreset` already contains region-mapped catalog connectors or the driver's
+        // explicit override. Mapping a second time would silently rewrite a user-selected adapter.
+        get() = configuredPreset.toVehicle(european = false)
             .copy(batteryHealthPercent = batteryHealthPercent)
 
     val estimatedRange: RangeEstimator.Estimate
@@ -237,6 +279,18 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun clearStart() = onStartTextChange("")
+
+    /** Rehydrates suggestions when an already-selected field is reopened. Previously the search
+     * sheet showed an endless spinner until the user changed the old place name. */
+    fun refreshStartSuggestions() {
+        val query = startText.trim()
+        if (query.isEmpty()) return
+        startSearchJob?.cancel()
+        searchMessage = null
+        startSearchJob = viewModelScope.launch { startSuggestions = search(query) }
+    }
+
     fun onDestinationTextChange(text: String) {
         invalidatePlan()
         destinationText = text
@@ -252,6 +306,16 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             delay(SEARCH_DEBOUNCE_MILLIS)
             destinationSuggestions = search(text)
         }
+    }
+
+    fun clearDestination() = onDestinationTextChange("")
+
+    fun refreshDestinationSuggestions() {
+        val query = destinationText.trim()
+        if (query.isEmpty()) return
+        destinationSearchJob?.cancel()
+        searchMessage = null
+        destinationSearchJob = viewModelScope.launch { destinationSuggestions = search(query) }
     }
 
     fun selectStart(candidate: PlaceCandidate) {
@@ -274,12 +338,11 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         searchMessage = null
     }
 
-    fun useCurrentLocation(latitude: Double, longitude: Double) {
-        if (!latitude.isFinite() || !longitude.isFinite() || latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
+    fun useCurrentLocation(latitude: Double, longitude: Double, accuracyMeters: Double? = null) {
+        if (!updateCurrentLocationAnchor(latitude, longitude, accuracyMeters)) {
             searchMessage = "Your device returned an invalid location. Try again outdoors."
             return
         }
-        currentLocation = LatLon(latitude, longitude)
         selectStart(
             PlaceCandidate(
                 placeName = "Current location",
@@ -289,6 +352,23 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
                 distanceKm = 0.0,
             ),
         )
+    }
+
+    /** Stores an optional foreground location only as a search-ranking/navigation anchor. It does
+     * not change either address field. */
+    fun updateCurrentLocationAnchor(
+        latitude: Double,
+        longitude: Double,
+        accuracyMeters: Double?,
+    ): Boolean {
+        if (!latitude.isFinite() || !longitude.isFinite() ||
+            latitude !in -90.0..90.0 || longitude !in -180.0..180.0
+        ) {
+            return false
+        }
+        currentLocation = LatLon(latitude, longitude)
+        currentLocationAccuracyMeters = accuracyMeters?.takeIf { it.isFinite() && it >= 0.0 }
+        return true
     }
 
     fun reportLocationUnavailable() {
@@ -368,6 +448,14 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         searchMessage = null
     }
 
+    fun refreshWaypointSuggestions(field: WaypointField) {
+        val query = field.text.trim()
+        if (query.isEmpty()) return
+        field.searchJob?.cancel()
+        searchMessage = null
+        field.searchJob = viewModelScope.launch { field.suggestions = search(query) }
+    }
+
     fun updateCurrentSoc(value: Float) {
         if (value == currentSocPercent) return
         currentSocPercent = value.coerceIn(5f, 100f)
@@ -376,42 +464,132 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateArrivalBuffer(value: Float) {
         if (value == arrivalBufferPercent) return
-        arrivalBufferPercent = value.coerceIn(5f, 40f)
+        arrivalBufferPercent = value.coerceIn(5f, 35f)
+        settings.arrivalBufferPercent = arrivalBufferPercent
         invalidatePlan()
     }
 
-    fun setDepartureOffset(minutes: Int) {
-        departureOffsetMinutes = minutes.coerceIn(0, 24 * 60)
+    fun updateUseScheduledDeparture(enabled: Boolean) {
+        if (useScheduledDeparture == enabled) return
+        useScheduledDeparture = enabled
+        if (enabled && scheduledDepartureMillis <= System.currentTimeMillis()) {
+            scheduledDepartureMillis = System.currentTimeMillis() + 5 * 60_000L
+        }
+        invalidatePlan()
     }
+
+    fun updateScheduledDeparture(millis: Long) {
+        val earliest = System.currentTimeMillis()
+        scheduledDepartureMillis = millis.coerceAtLeast(earliest)
+        useScheduledDeparture = true
+        invalidatePlan()
+    }
+
+    fun effectiveDepartureMillis(nowMillis: Long = System.currentTimeMillis()): Long =
+        if (useScheduledDeparture) scheduledDepartureMillis.coerceAtLeast(nowMillis) else nowMillis
 
     fun completeOnboarding() {
         hasOnboarded = true
         settings.hasOnboarded = true
     }
 
-    fun updateDarkMode(value: Boolean) {
-        prefersDarkMode = value
-        settings.prefersDarkMode = value
+    fun showVehiclePicker() {
+        pickerReturnsToEditor = false
+        pickerShowsGarageOnly = true
+        isCreatingVehicle = false
+        isPickingVehicle = true
+    }
+    fun hideVehiclePicker() {
+        isPickingVehicle = false
+        pickerShowsGarageOnly = false
+        if (pickerReturnsToEditor) {
+            pickerReturnsToEditor = false
+            isEditingVehicle = true
+        }
+    }
+    fun showVehicleEditor() {
+        editorOriginalIdentifier = selectedPreset.catalogIdentifier
+        editorReturnPreset = selectedPreset
+        editorReturnOverride = selectedVehicleOverride
+        editorRestoresSelectionAfterSave = false
+        editorHasCatalogSeed = !selectedPreset.catalogIdentifier.startsWith("custom:")
+        isCreatingVehicle = false
+        isEditingVehicle = true
     }
 
-    fun showVehiclePicker() { isPickingVehicle = true }
-    fun hideVehiclePicker() { isPickingVehicle = false }
-    fun showVehicleEditor() { isEditingVehicle = true }
-    fun hideVehicleEditor() { isEditingVehicle = false }
-    fun replaceVehicleFromEditor() {
+    /** Opens a Garage profile for editing without selecting it as the trip-planning vehicle.
+     * iOS treats the pencil and the card tap as separate actions; Android must do the same. */
+    fun showVehicleEditor(preset: EvPreset) {
+        val currentPreset = selectedPreset
+        val currentOverride = selectedVehicleOverride
+        editorOriginalIdentifier = preset.catalogIdentifier
+        editorReturnPreset = currentPreset
+        editorReturnOverride = currentOverride
+        editorRestoresSelectionAfterSave = preset.catalogIdentifier != currentPreset.catalogIdentifier
+        selectedPreset = preset
+        selectedVehicleOverride = settings.vehicleOverride(preset.catalogIdentifier)
+        editorHasCatalogSeed = !preset.catalogIdentifier.startsWith("custom:")
+        isCreatingVehicle = false
+        isEditingVehicle = true
+    }
+    fun showCustomVehicleEditor() {
+        pickerShowsGarageOnly = false
+        if (pickerReturnsToEditor) {
+            editorReturnPreset?.let { selectedPreset = it }
+            selectedVehicleOverride = editorReturnOverride
+            pickerReturnsToEditor = false
+            isPickingVehicle = false
+            editorHasCatalogSeed = !isCreatingVehicle && !selectedPreset.catalogIdentifier.startsWith("custom:")
+            isEditingVehicle = true
+            return
+        }
+        editorOriginalIdentifier = null
+        editorReturnPreset = selectedPreset
+        editorReturnOverride = selectedVehicleOverride
+        editorRestoresSelectionAfterSave = false
+        editorHasCatalogSeed = false
+        isPickingVehicle = false
+        isCreatingVehicle = true
+        isEditingVehicle = true
+    }
+    fun hideVehicleEditor() {
+        editorReturnPreset?.let { selectedPreset = it }
+        selectedVehicleOverride = editorReturnOverride
+        clearVehicleEditorState()
+    }
+    private fun clearVehicleEditorState() {
         isEditingVehicle = false
+        isPickingVehicle = false
+        isCreatingVehicle = false
+        editorHasCatalogSeed = false
+        pickerShowsGarageOnly = false
+        editorOriginalIdentifier = null
+        editorReturnPreset = null
+        editorReturnOverride = null
+        editorRestoresSelectionAfterSave = false
+        pickerReturnsToEditor = false
+    }
+    fun replaceVehicleFromEditor() {
+        pickerShowsGarageOnly = false
+        pickerReturnsToEditor = true
         isPickingVehicle = true
     }
     fun showSettings() { isEditingSettings = true }
     fun hideSettings() { isEditingSettings = false }
     fun showLicenses() { isViewingLicenses = true }
     fun hideLicenses() { isViewingLicenses = false }
+    fun showInformation(page: InformationPage) { informationPage = page }
+    fun hideInformation() { informationPage = null }
 
     fun updateRegion(value: Region) {
         if (region == value) return
         region = value
         settings.region = value
         usesMiles = settings.usesMiles
+        preferredNetworks = value.defaultNetworks
+        avoidedNetworks = emptySet()
+        settings.preferredNetworks = preferredNetworks
+        settings.avoidedNetworks = avoidedNetworks
         invalidatePlan()
     }
 
@@ -444,7 +622,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateMinimumChargerSpeed(value: Float) {
-        minimumChargerSpeedKw = value.coerceIn(0f, 350f)
+        minimumChargerSpeedKw = value.coerceIn(50f, 350f)
         settings.minimumChargerSpeedKw = minimumChargerSpeedKw.toInt()
         invalidatePlan()
     }
@@ -461,13 +639,91 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         invalidatePlan()
     }
 
+    fun updatePreferredNetworks(value: Set<String>) {
+        preferredNetworks = value.intersect(region.defaultNetworks)
+        settings.preferredNetworks = preferredNetworks
+        invalidatePlan()
+    }
+
     fun updateAvoidedNetworks(text: String) {
         avoidedNetworks = parseNetworks(text)
         settings.avoidedNetworks = avoidedNetworks
         invalidatePlan()
     }
 
+    fun updateAvoidedNetworks(value: Set<String>) {
+        avoidedNetworks = value.intersect(region.defaultNetworks)
+        settings.avoidedNetworks = avoidedNetworks
+        invalidatePlan()
+    }
+
+    fun resetAllToDefaults() {
+        startSearchJob?.cancel()
+        startSearchJob = null
+        destinationSearchJob?.cancel()
+        destinationSearchJob = null
+        waypoints.forEach { it.searchJob?.cancel() }
+        rerouteJob?.cancel()
+        rerouteJob = null
+        invalidatePlan()
+        settings.resetAll()
+
+        region = settings.region
+        usesMiles = region.usesImperialByDefault
+        preferredNav = settings.preferredNav
+        customVehicleRecords = emptyList()
+        garageVehicleIdentifiers = starterGarage.map(EvPreset::catalogIdentifier)
+        selectedPreset = garageVehicles.firstOrNull() ?: EvCatalog.default
+        selectedVehicleOverride = null
+        currentSocPercent = 70f
+        arrivalBufferPercent = 15f
+        useScheduledDeparture = false
+        scheduledDepartureMillis = System.currentTimeMillis() + 5 * 60_000L
+        weatherRangeLossPercent = 0f
+        extraLoadKg = 0f
+        drivingStyle = RangeDrivingStyle.BALANCED
+        minimumChargerSpeedKw = 50f
+        avoidLowConfidenceStations = false
+        preferredNetworks = region.defaultNetworks
+        avoidedNetworks = emptySet()
+        waypoints.clear()
+        startSuggestions = emptyList()
+        destinationSuggestions = emptyList()
+        searchMessage = null
+        savedTrips = emptyList()
+        savedTripMessage = "Settings and saved data were reset."
+        navSession = null
+        arrivalSuggested = false
+        isGuidedNavigationOpen = false
+        activeNavigationRoute = null
+        navigationOrigin = null
+        navigationBaselineBatteryPercent = 70.0
+        navigationBaselineStartedAtMillis = 0L
+        isRerouting = false
+        navigationError = null
+        clearVehicleEditorState()
+        isViewingLicenses = false
+        informationPage = null
+
+        // Keep onboarding completed just as iOS does, then persist the fresh Garage identities.
+        hasOnboarded = true
+        settings.hasOnboarded = true
+        settings.garageVehicleIdentifiers = garageVehicleIdentifiers
+        settings.selectedVehicleIdentifier = selectedPreset.catalogIdentifier
+    }
+
     fun selectPreset(preset: EvPreset) {
+        if (pickerReturnsToEditor) {
+            selectedPreset = preset
+            selectedVehicleOverride = null
+            editorHasCatalogSeed = true
+            editorSeedRevision += 1
+            pickerReturnsToEditor = false
+            isPickingVehicle = false
+            pickerShowsGarageOnly = false
+            isEditingVehicle = true
+            return
+        }
         if (preset.catalogIdentifier !in garageVehicleIdentifiers) {
             garageVehicleIdentifiers = normalizeGarageVehicleIdentifiers(
                 listOf(preset.catalogIdentifier) + garageVehicleIdentifiers,
@@ -478,11 +734,17 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         selectedVehicleOverride = settings.vehicleOverride(preset.catalogIdentifier)
         settings.selectedVehicleIdentifier = preset.catalogIdentifier
         isPickingVehicle = false
+        pickerShowsGarageOnly = false
+        editorHasCatalogSeed = false
+        editorOriginalIdentifier = null
+        editorReturnPreset = null
+        editorReturnOverride = null
         invalidatePlan()
     }
 
     fun configuredPresetFor(preset: EvPreset): EvPreset =
-        settings.vehicleOverride(preset.catalogIdentifier)?.applyTo(preset) ?: preset
+        settings.vehicleOverride(preset.catalogIdentifier)?.applyTo(preset)
+            ?: preset.copy(connectorTypes = preset.connectorTypes(region.isEuropean))
 
     fun batteryHealthFor(preset: EvPreset): Double =
         settings.vehicleOverride(preset.catalogIdentifier)?.batteryHealthPercent ?: 100.0
@@ -493,8 +755,13 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         if (updated.size == garageVehicleIdentifiers.size) return
         garageVehicleIdentifiers = updated
         settings.garageVehicleIdentifiers = updated
+        settings.setVehicleOverride(preset.catalogIdentifier, null)
+        if (preset.catalogIdentifier.startsWith("custom:")) {
+            customVehicleRecords = customVehicleRecords.filterNot { it.identifier == preset.catalogIdentifier }
+            settings.customVehicles = customVehicleRecords
+        }
         if (selectedPreset.catalogIdentifier == preset.catalogIdentifier) {
-            val replacement = updated.firstNotNullOfOrNull { EvCatalog.preset(it) } ?: EvCatalog.default
+            val replacement = updated.firstNotNullOfOrNull(::presetForIdentifier) ?: EvCatalog.default
             selectedPreset = replacement
             selectedVehicleOverride = settings.vehicleOverride(replacement.catalogIdentifier)
             settings.selectedVehicleIdentifier = replacement.catalogIdentifier
@@ -502,19 +769,48 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveVehicleOverride(
+    fun deleteVehicleBeingEdited() {
+        val identifier = editorOriginalIdentifier ?: return
+        val original = presetForIdentifier(identifier) ?: return
+        val restorePreset = editorReturnPreset
+        val shouldRestoreSelection = editorRestoresSelectionAfterSave
+        selectedPreset = original
+        selectedVehicleOverride = settings.vehicleOverride(identifier)
+        removeGarageVehicle(original)
+        if (shouldRestoreSelection && restorePreset != null) {
+            presetForIdentifier(restorePreset.catalogIdentifier)?.let { restored ->
+                selectedPreset = restored
+                selectedVehicleOverride = settings.vehicleOverride(restored.catalogIdentifier)
+                settings.selectedVehicleIdentifier = restored.catalogIdentifier
+            }
+        }
+        clearVehicleEditorState()
+    }
+
+    fun saveVehicle(
+        make: String,
+        model: String,
+        year: Int,
         batteryCapacityKwh: Double,
         maxDcChargingKw: Int,
         efficiencyKwhPer100Km: Double,
         batteryHealthPercent: Double,
+        defaultArrivalBufferPercent: Int,
         connectors: Set<ConnectorType>,
     ): String? {
+        val normalizedMake = make.trim()
+        val normalizedModel = model.trim()
         val efficiency = efficiencyKwhPer100Km / 100.0
         val error = when {
-            !batteryCapacityKwh.isFinite() || batteryCapacityKwh !in 10.0..300.0 -> "Battery capacity must be between 10 and 300 kWh."
-            maxDcChargingKw !in 20..500 -> "Maximum DC charging must be between 20 and 500 kW."
-            !efficiency.isFinite() || efficiency !in 0.05..0.60 -> "Consumption must be between 5 and 60 kWh/100 km."
-            !batteryHealthPercent.isFinite() || batteryHealthPercent !in 50.0..100.0 -> "Battery health must be between 50% and 100%."
+            normalizedMake.isEmpty() -> "Vehicle make is required."
+            normalizedModel.isEmpty() -> "Vehicle model is required."
+            normalizedMake.length > 100 || normalizedModel.length > 150 -> "Vehicle name is too long."
+            year !in 2010..(Calendar.getInstance().get(Calendar.YEAR) + 1) -> "Enter a valid model year."
+            !batteryCapacityKwh.isFinite() || batteryCapacityKwh !in 15.0..300.0 -> "Battery capacity must be between 15 and 300 kWh."
+            maxDcChargingKw !in 25..500 -> "Maximum DC charging must be between 25 and 500 kW."
+            !efficiency.isFinite() || efficiency <= 0.05 || efficiency > 0.50 -> "Consumption must be above 5 and no more than 50 kWh/100 km."
+            !batteryHealthPercent.isFinite() || batteryHealthPercent !in 60.0..100.0 -> "Battery health must be between 60% and 100%."
+            defaultArrivalBufferPercent !in 5..35 -> "Arrival buffer must be between 5% and 35%."
             connectors.isEmpty() -> "Select at least one compatible connector."
             else -> null
         }
@@ -525,15 +821,97 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             efficiencyKwhPerKm = efficiency,
             connectorNames = connectors.map { it.name }.sorted(),
             batteryHealthPercent = batteryHealthPercent,
+            defaultArrivalBufferPercent = defaultArrivalBufferPercent,
         )
-        selectedVehicleOverride = override
-        settings.setVehicleOverride(selectedPreset.catalogIdentifier, override)
-        isEditingVehicle = false
+        val sourceCatalogIdentifier = when {
+            !selectedPreset.catalogIdentifier.startsWith("custom:") -> selectedPreset.catalogIdentifier
+            else -> customVehicleRecords.firstOrNull {
+                it.identifier == selectedPreset.catalogIdentifier
+            }?.sourceCatalogIdentifier
+        }
+        val sourcePreset = presetForIdentifier(sourceCatalogIdentifier)
+        val sourceIdentityStillMatches = sourcePreset != null &&
+            normalizedMake.equals(sourcePreset.make, ignoreCase = true) &&
+            normalizedModel.equals(sourcePreset.model, ignoreCase = true) &&
+            year == sourcePreset.year
+        val mustCreateIndependentProfile = isCreatingVehicle || (
+            editorOriginalIdentifier != null &&
+                editorHasCatalogSeed &&
+                editorOriginalIdentifier != selectedPreset.catalogIdentifier
+            )
+        val identityStillMatchesCatalog = !mustCreateIndependentProfile &&
+            !selectedPreset.catalogIdentifier.startsWith("custom:") &&
+            normalizedMake.equals(selectedPreset.make, ignoreCase = true) &&
+            normalizedModel.equals(selectedPreset.model, ignoreCase = true) &&
+            year == selectedPreset.year
+        val identifier = if (identityStillMatchesCatalog) {
+            selectedPreset.catalogIdentifier
+        } else {
+            editorOriginalIdentifier?.takeIf {
+                !editorHasCatalogSeed && it.startsWith("custom:")
+            } ?: "custom:${UUID.randomUUID()}"
+        }
+
+        var persistedPreset = selectedPreset
+        if (identifier.startsWith("custom:")) {
+            val record = CustomVehicleRecord(
+                identifier = identifier,
+                make = normalizedMake,
+                model = normalizedModel,
+                year = year,
+                batteryCapacityKwh = batteryCapacityKwh,
+                maxDcChargingKw = maxDcChargingKw,
+                efficiencyKwhPerKm = efficiency,
+                connectorNames = connectors.map { it.name }.sorted(),
+                sourceCatalogIdentifier = sourceCatalogIdentifier.takeIf { sourceIdentityStillMatches },
+            )
+            customVehicleRecords = (listOf(record) + customVehicleRecords.filterNot { it.identifier == identifier })
+                .take(MAX_GARAGE_VEHICLES)
+            settings.customVehicles = customVehicleRecords
+            persistedPreset = record.toPreset()
+        } else {
+            persistedPreset = presetForIdentifier(identifier) ?: selectedPreset
+        }
+
+        val previousIdentifier = editorOriginalIdentifier
+        garageVehicleIdentifiers = replacingGarageVehicleIdentifier(
+            values = garageVehicleIdentifiers,
+            original = previousIdentifier,
+            replacement = identifier,
+        )
+        settings.garageVehicleIdentifiers = garageVehicleIdentifiers
+        if (previousIdentifier != null && previousIdentifier != identifier) {
+            if (previousIdentifier.startsWith("custom:")) {
+                customVehicleRecords = customVehicleRecords.filterNot { it.identifier == previousIdentifier }
+                settings.customVehicles = customVehicleRecords
+            }
+            settings.setVehicleOverride(previousIdentifier, null)
+        }
+
+        val restorePreset = editorReturnPreset
+        val shouldRestoreSelection = editorRestoresSelectionAfterSave
+        settings.setVehicleOverride(identifier, override)
+        if (shouldRestoreSelection && restorePreset != null) {
+            selectedPreset = presetForIdentifier(restorePreset.catalogIdentifier) ?: restorePreset
+            selectedVehicleOverride = settings.vehicleOverride(selectedPreset.catalogIdentifier)
+            settings.selectedVehicleIdentifier = selectedPreset.catalogIdentifier
+        } else {
+            selectedPreset = persistedPreset
+            selectedVehicleOverride = override
+            settings.selectedVehicleIdentifier = identifier
+        }
+        clearVehicleEditorState()
         invalidatePlan()
         return null
     }
 
     fun resetVehicleOverride() {
+        if (selectedPreset.catalogIdentifier.startsWith("custom:")) {
+            // A manually entered profile has no external catalog baseline to restore.
+            isEditingVehicle = false
+            isCreatingVehicle = false
+            return
+        }
         selectedVehicleOverride = null
         settings.setVehicleOverride(selectedPreset.catalogIdentifier, null)
         isEditingVehicle = false
@@ -591,8 +969,9 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         currentSocPercent = snapshot.currentSocPercent.coerceIn(5f, 100f)
-        arrivalBufferPercent = snapshot.arrivalBufferPercent.coerceIn(5f, 40f)
-        EvCatalog.preset(snapshot.vehicleIdentifier)?.let { preset ->
+        arrivalBufferPercent = snapshot.arrivalBufferPercent.coerceIn(5f, 35f)
+        settings.arrivalBufferPercent = arrivalBufferPercent
+        presetForIdentifier(snapshot.vehicleIdentifier)?.let { preset ->
             if (preset.catalogIdentifier !in garageVehicleIdentifiers) {
                 garageVehicleIdentifiers = (garageVehicleIdentifiers + preset.catalogIdentifier).distinct()
                 settings.garageVehicleIdentifiers = garageVehicleIdentifiers
@@ -604,7 +983,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         weatherRangeLossPercent = snapshot.weatherRangeLossPercent.coerceIn(0f, 45f)
         extraLoadKg = snapshot.extraLoadKg.coerceIn(0f, 750f)
         drivingStyle = RangeDrivingStyle.fromSerialized(snapshot.drivingStyle)
-        minimumChargerSpeedKw = snapshot.minimumChargerSpeedKw.coerceIn(0, 350).toFloat()
+        minimumChargerSpeedKw = snapshot.minimumChargerSpeedKw.coerceIn(50, 350).toFloat()
         preferredNetworks = snapshot.preferredNetworks
         avoidedNetworks = snapshot.avoidedNetworks
         avoidLowConfidenceStations = snapshot.avoidLowConfidenceStations
@@ -628,7 +1007,13 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         val dest = destination ?: return
         val stops = option.orderedNavigationPoints()
         val destinationPoint = NavigationPoint(dest.latitude, dest.longitude, dest.placeName, NavigationPoint.Kind.DESTINATION)
-        navSession = NavigationSession.create(stops, destinationPoint, app, System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        navSession = NavigationSession.create(stops, destinationPoint, app, now)
+        activeNavigationRoute = option
+        navigationOrigin = start?.let { LatLon(it.latitude, it.longitude) }
+        navigationBaselineBatteryPercent = currentSocPercent.toDouble()
+        navigationBaselineStartedAtMillis = now
+        navigationError = null
         arrivalSuggested = false
         isGuidedNavigationOpen = true
         settings.navigationSession = navSession
@@ -643,13 +1028,23 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     fun advanceGuidedTrip() {
         val advanced = navSession?.markCurrentPointComplete() ?: return
         navSession = if (advanced.isComplete) null else advanced
-        if (navSession == null) isGuidedNavigationOpen = false
+        if (navSession == null) {
+            isGuidedNavigationOpen = false
+            activeNavigationRoute = null
+            navigationOrigin = null
+        }
         arrivalSuggested = false
         settings.navigationSession = navSession
     }
 
     fun endGuidedTrip() {
+        rerouteJob?.cancel()
+        rerouteJob = null
         navSession = null
+        activeNavigationRoute = null
+        navigationOrigin = null
+        isRerouting = false
+        navigationError = null
         arrivalSuggested = false
         isGuidedNavigationOpen = false
         settings.navigationSession = null
@@ -659,8 +1054,95 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         isGuidedNavigationOpen = false
     }
 
+    /** Rebuilds the complete EV plan from the live position, including charging stops and SOC.
+     * This matches iOS rerouting behavior; it never swaps only the blue map line while leaving an
+     * unsafe charging plan behind. */
+    fun rerouteActiveTrip(currentSegmentIndex: Int) {
+        val current = currentLocation
+        val destinationSnapshot = destination
+        val previousRoute = activeNavigationRoute
+        if (current == null || destinationSnapshot == null || previousRoute == null) {
+            navigationError = "A current location and active route are required to reroute."
+            return
+        }
+        if (isRerouting) return
+
+        val remainingWaypoints = previousRoute.userWaypoints.indices.mapNotNull { index ->
+            val segment = previousRoute.userWaypointSegmentIndices.getOrNull(index) ?: Int.MAX_VALUE
+            previousRoute.userWaypoints[index].takeIf { segment >= currentSegmentIndex }
+        }
+        val now = System.currentTimeMillis()
+        val elapsedMinutes = if (navigationBaselineStartedAtMillis > 0L) {
+            ((now - navigationBaselineStartedAtMillis).coerceAtLeast(0L) / 60_000.0)
+        } else {
+            0.0
+        }
+        val progress = if (previousRoute.totalEtaMinutes > 0) {
+            (elapsedMinutes / previousRoute.totalEtaMinutes).coerceIn(0.0, 1.0)
+        } else {
+            0.0
+        }
+        val estimatedBattery = (
+            navigationBaselineBatteryPercent +
+                (previousRoute.arrivalBatteryPercent - navigationBaselineBatteryPercent) * progress
+            ).coerceIn(5.0, 100.0)
+        val requestedObjective = previousRoute.objective
+        val app = navSession?.app ?: preferredNav
+
+        rerouteJob?.cancel()
+        isRerouting = true
+        navigationError = null
+        rerouteJob = viewModelScope.launch {
+            try {
+                when (
+                    val result = planner.planThrough(
+                        start = current,
+                        waypoints = remainingWaypoints,
+                        destination = LatLon(destinationSnapshot.latitude, destinationSnapshot.longitude),
+                        vehicle = baseVehicle,
+                        currentSOC = estimatedBattery,
+                        arrivalBufferPercent = arrivalBufferPercent.toDouble(),
+                        conditions = planningConditions,
+                        preferences = planningPreferences,
+                    )
+                ) {
+                    is TripPlanner.Result.Success -> {
+                        val route = result.options.firstOrNull { option ->
+                            option.objective == requestedObjective || requestedObjective in option.supportedObjectives
+                        } ?: result.options.firstOrNull()
+                        if (route == null) {
+                            navigationError = "No safe updated charging route is available."
+                            return@launch
+                        }
+                        val updated = route.copy(plannedDepartureMillis = now)
+                        activeNavigationRoute = updated
+                        navigationOrigin = current
+                        navigationBaselineBatteryPercent = estimatedBattery
+                        navigationBaselineStartedAtMillis = now
+                        navSession = NavigationSession.create(
+                            updated.orderedNavigationPoints(),
+                            NavigationPoint(
+                                destinationSnapshot.latitude,
+                                destinationSnapshot.longitude,
+                                destinationSnapshot.placeName,
+                                NavigationPoint.Kind.DESTINATION,
+                            ),
+                            app,
+                            now,
+                        )
+                        settings.navigationSession = navSession
+                        arrivalSuggested = false
+                    }
+                    is TripPlanner.Result.Error -> navigationError = result.message
+                }
+            } finally {
+                isRerouting = false
+            }
+        }
+    }
+
     fun onLocationSample(latitude: Double, longitude: Double, accuracyMeters: Double?, sampleMillis: Long) {
-        currentLocation = LatLon(latitude, longitude)
+        if (!updateCurrentLocationAnchor(latitude, longitude, accuracyMeters)) return
         val session = navSession ?: return
         if (session.shouldSuggestArrival(latitude, longitude, accuracyMeters, sampleMillis, System.currentTimeMillis())) {
             arrivalSuggested = true
@@ -676,10 +1158,6 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             errorMessage = "Pick a start and destination from search."
             return
         }
-        if (Geometry.haversineMeters(from.latitude, from.longitude, to.latitude, to.longitude) < 50.0) {
-            errorMessage = "Start and destination are the same place."
-            return
-        }
         if (currentSocPercent <= arrivalBufferPercent) {
             errorMessage = "Starting battery must be higher than the arrival buffer."
             return
@@ -690,7 +1168,13 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val stops = waypoints.mapNotNull { it.selected }
+        val itinerary = listOf(from) + stops + to
+        itineraryValidationError(itinerary)?.let { validationError ->
+            errorMessage = validationError
+            return
+        }
         val requestedObjective = selectedOption?.objective
+        val departureSnapshot = effectiveDepartureMillis()
         val generation = ++planGeneration
         planJob?.cancel()
         isPlanning = true
@@ -720,9 +1204,11 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
                 if (generation != planGeneration) return@launch
                 when (result) {
                     is TripPlanner.Result.Success -> {
-                        options = result.options
+                        options = result.options.map { option ->
+                            option.copy(plannedDepartureMillis = departureSnapshot)
+                        }
                         selectedIndex = requestedObjective?.let { objective ->
-                            result.options.indexOfFirst { option ->
+                            options.indexOfFirst { option ->
                                 option.objective == objective || objective in option.supportedObjectives
                             }.takeIf { it >= 0 }
                         } ?: 0
@@ -816,11 +1302,35 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
+internal fun itineraryValidationError(itinerary: List<PlaceCandidate>): String? {
+    val start = itinerary.firstOrNull()
+    val destination = itinerary.lastOrNull()
+    if (itinerary.size > 1 && start != null && destination != null &&
+        start.latitude == destination.latitude && start.longitude == destination.longitude
+    ) {
+        return "Start and destination cannot be the same."
+    }
+    val unsupported = itinerary.firstOrNull { !Region.supports(it.countryCode) }
+    if (unsupported != null) {
+        return "${unsupported.placeName} is in ${unsupported.countryCode ?: "an unsupported country"}, where EV FastRoute does not yet support charging plans."
+    }
+    if (itinerary.zipWithNext().any { (left, right) ->
+            Geometry.haversineMeters(
+                left.latitude, left.longitude, right.latitude, right.longitude,
+            ) < 20.0
+        }
+    ) {
+        return "Two consecutive trip locations are the same. Remove or replace the duplicate stop."
+    }
+    return null
+}
+
 private fun PlaceCandidate.toSavedPlace(): SavedPlace = SavedPlace(
     name = placeName,
     address = fullAddress,
     latitude = latitude,
     longitude = longitude,
+    countryCode = countryCode,
 )
 
 private fun SavedPlace.toCandidate(): PlaceCandidate = PlaceCandidate(
@@ -828,4 +1338,5 @@ private fun SavedPlace.toCandidate(): PlaceCandidate = PlaceCandidate(
     fullAddress = address,
     latitude = latitude,
     longitude = longitude,
+    countryCode = countryCode,
 )

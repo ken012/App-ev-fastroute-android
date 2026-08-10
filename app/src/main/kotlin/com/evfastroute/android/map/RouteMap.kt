@@ -40,6 +40,8 @@ import org.maplibre.geojson.Point
 // OpenFreeMap MapLibre style (free, no API key).
 private const val STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
 
+enum class RouteMapCameraMode { OVERVIEW, FOLLOWING, MANUAL }
+
 private class MapState {
     var map: MapLibreMap? = null
     var style: Style? = null
@@ -49,7 +51,10 @@ private class MapState {
     var start: LatLon? = null
     var destination: LatLon? = null
     var userLocation: LatLon? = null
-    var followUser = false
+    var cameraMode = RouteMapCameraMode.OVERVIEW
+    var cameraActionToken = 0
+    var lastFollowedLocation: LatLon? = null
+    var onManualInteraction: (() -> Unit)? = null
     var fallbackCenter = LatLon(37.7749, -122.4194)
     var hasFitted = false
     var loadState by mutableStateOf<MapLoadState>(MapLoadState.LOADING)
@@ -67,10 +72,13 @@ fun RouteMap(
     waypoints: List<LatLon> = emptyList(),
     fallbackCenter: LatLon = LatLon(37.7749, -122.4194),
     userLocation: LatLon? = null,
-    followUser: Boolean = false,
+    cameraMode: RouteMapCameraMode = RouteMapCameraMode.OVERVIEW,
+    cameraActionToken: Int = 0,
+    onManualInteraction: (() -> Unit)? = null,
 ) {
     val mapView = rememberMapViewWithLifecycle()
     val state = remember { MapState() }
+    state.onManualInteraction = onManualInteraction
 
     Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
         AndroidView(
@@ -80,6 +88,18 @@ fun RouteMap(
                 mapView.addOnDidFinishLoadingMapListener { state.loadState = MapLoadState.LOADED }
                 mapView.getMapAsync { map ->
                     state.map = map
+                    map.addOnCameraMoveStartedListener { reason ->
+                        if (
+                            reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE &&
+                            state.cameraMode != RouteMapCameraMode.MANUAL &&
+                            state.onManualInteraction != null
+                        ) {
+                            // Stop live GPS updates from yanking the map back while the driver
+                            // looks ahead. Recenter explicitly resumes follow mode.
+                            state.cameraMode = RouteMapCameraMode.MANUAL
+                            state.onManualInteraction?.invoke()
+                        }
+                    }
                     map.setStyle(Style.Builder().fromUri(STYLE_URL)) { style ->
                         state.style = style
                         applyRoute(style, map, state)
@@ -102,7 +122,15 @@ fun RouteMap(
                 state.destination = destination
                 state.fallbackCenter = fallbackCenter
                 state.userLocation = userLocation
-                state.followUser = followUser
+                if (cameraMode != state.cameraMode || cameraActionToken != state.cameraActionToken) {
+                    state.cameraMode = cameraMode
+                    state.cameraActionToken = cameraActionToken
+                    when (cameraMode) {
+                        RouteMapCameraMode.OVERVIEW -> state.hasFitted = false
+                        RouteMapCameraMode.FOLLOWING -> state.lastFollowedLocation = null
+                        RouteMapCameraMode.MANUAL -> Unit
+                    }
+                }
                 state.style?.let { applyRoute(it, state.map, state) }
             },
         )
@@ -157,7 +185,7 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
     if (style.getLayer("waypoint-points") == null) {
         style.addLayer(
             CircleLayer("waypoint-points", "waypoints").withProperties(
-                PropertyFactory.circleColor("#F5A623"), // amber = the driver's own stops
+                PropertyFactory.circleColor("#5969D8"), // shared visit-stop indigo
                 PropertyFactory.circleRadius(7f),
                 PropertyFactory.circleStrokeColor("#FFFFFF"),
                 PropertyFactory.circleStrokeWidth(2f),
@@ -201,18 +229,19 @@ private fun applyRoute(style: Style, map: MapLibreMap?, state: MapState) {
         )
     }
 
-    if (state.followUser) {
-        state.userLocation?.let { point ->
+    if (state.cameraMode == RouteMapCameraMode.FOLLOWING) {
+        state.userLocation?.takeIf { it != state.lastFollowedLocation }?.let { point ->
             map?.easeCamera(
                 CameraUpdateFactory.newLatLngZoom(LatLng(point.latitude, point.longitude), 14.5),
             )
+            state.lastFollowedLocation = point
             state.hasFitted = true
         }
     }
 
     // Fit once to the whole route.
     val all = state.route + state.chargers + state.waypoints + listOfNotNull(state.start, state.destination)
-    if (!state.hasFitted && map != null) {
+    if (state.cameraMode == RouteMapCameraMode.OVERVIEW && !state.hasFitted && map != null) {
         when {
             all.size > 1 -> {
                 val bounds = LatLngBounds.Builder()

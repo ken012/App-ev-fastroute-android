@@ -1,16 +1,19 @@
 # EV FastRoute — iOS/Android parity
 
-iOS is SwiftUI/MapKit; Android is native Kotlin/Compose. The platforms share product behavior and
-ported/tested planning logic, but use different map/search/routing providers where OS APIs differ.
+iOS is SwiftUI/MapKit; Android is native Kotlin/Compose/MapLibre. Both clients now use the same
+openrouteservice driving contract, Open Charge Map query/mapping rules, EV catalog, range model,
+charger-sequence search, and final objective selection. Given the same selected coordinates,
+vehicle/settings, and provider snapshot, they are expected to return the same road geometry,
+charging-stop sequence, SOC targets, ETA math, and route objectives.
 
 ## Current Android stack
 
 | Concern | iOS | Android | Production note |
 |---|---|---|---|
-| Map | MapKit | MapLibre Native + OpenFreeMap | Android keeps on-map attribution enabled |
-| Routing | MKDirections | openrouteservice | Traffic-free; production capacity/proxy required at scale |
-| Search | MKLocalSearch | Android device geocoder + Photon + shared ranker | Photon public demo has no SLA |
-| Chargers | Open Charge Map | Open Charge Map | `compact=false`, `opendata=true`, provider attribution shown |
+| Map | MapKit | MapLibre Native OpenGL ES + OpenFreeMap | Widest-compatible stable backend; on-map attribution remains enabled |
+| Routing | openrouteservice | openrouteservice | Same `driving-car/geojson` request; traffic-independent; proxy/capacity required at scale |
+| Search | MKLocalSearch/CLGeocoder + shared ranker | Android geocoder + Photon + shared ranker | Ranking rules match; provider inventories do not, so typed-query results cannot be guaranteed identical |
+| Chargers | Open Charge Map | Open Charge Map | Same boxes, `minpowerkw=25`, `maxresults=200`; `compact` and `opendata` intentionally omitted |
 | Storage | UserDefaults | app-private SharedPreferences | Android cloud/device-transfer backup disabled |
 | Product shell | SwiftUI branded shell | Compose branded shell | Same onboarding and Plan/Route/Garage/Settings information architecture |
 | Navigation | Apple/Google/Waze handoff | Google/Waze/default-app handoff | Waze/default are sequential stop-by-stop |
@@ -30,8 +33,8 @@ ported/tested planning logic, but use different map/search/routing providers whe
 | Search relevance/proximity/typos/dedup/broadening | `PlaceRanker` | JVM tests |
 | Route geometry/corridor segmentation | strict ORS parsing + route covering boxes | JVM tests |
 | Google/Waze/default deep links | UTF-8-safe coordinate-first URLs | JVM tests |
-| Guided navigation progress | full-map trip screen + expiring `NavigationSession` + foreground arrival prompt | JVM tests + UI smoke |
-| Onboarding, garage, saved trips, vehicle overrides, filters, settings | `SettingsStore` | serialization/runtime smoke |
+| Guided navigation progress | maneuvers, follow/manual/overview camera, full EV reroute, expiring `NavigationSession`, foreground arrival prompt | JVM tests; emulator/device smoke pending on this commit |
+| Onboarding, scheduled departure, editable replanning, Garage/custom vehicles (including editable model year), saved trips, filters, settings/reset | `SettingsStore` + Compose shell | JVM/Compose tests; device smoke pending |
 
 ## Android app capabilities
 
@@ -39,24 +42,32 @@ ported/tested planning logic, but use different map/search/routing providers whe
   Garage, and Settings. Native permission dialogs and the platform map renderer remain Android-native.
 - Full-screen start/destination/stop search, current location, ordered user waypoints, swap,
   reorder, and remove.
-- Persistent multi-vehicle Garage, searchable vehicle picker, and per-vehicle editable
-  battery/consumption/DC power/connectors/battery health.
+- Persistent multi-vehicle Garage, searchable vehicle picker, manual/custom profiles, and editable
+  identity/battery/consumption/DC power/connectors/battery health/default arrival reserve.
 - Weather loss, passenger/cargo, driving-style range assumptions.
 - Minimum charging speed, preferred/avoided networks, optional low-confidence exclusion.
 - Live charging-station corridor retrieval in bounded overlapping boxes with success-only caches.
 - Route option cards, deduplicated-objective badges, map line/pins, arrival battery/timeline, known
-  single-currency cost only, provider-specific OCM licensing, and visible safety disclosure.
-- Manual and five-minute-on-resume route refresh (suppressed during an active guided trip).
-- Full-map guided-trip screen with live foreground position/follow marker, ETA, next-stop progress,
-  arrival confirmation, and safe handoff to the selected turn-by-turn app.
+  single-currency cost only, tappable station-detail pages, provider-specific OCM licensing, and
+  visible safety disclosure.
+- Absolute scheduled departure with frozen per-stop arrival clock times, plus manual and
+  five-minute-on-resume refresh (suppressed during an active guided trip).
+- Full-map guided-trip screen with ORS maneuvers, live foreground follow, pan-to-manual camera,
+  Recenter/Overview/Reroute controls, conservative off-route detection, complete charger/SOC
+  recalculation, next-stop progress, arrival confirmation, and external-navigation handoff.
+- Results can always return to the populated planner, edit any field, and calculate again.
 - Full Google trip where the documented waypoint cap permits; safe sequential sessions otherwise.
-- Adaptive launcher icon, edge-to-edge dark/light themes, API 26 minimum, API 36 target, R8 release build,
-  16 KB native-library CI check, unit/lint/build gate, and emulator launch smoke test.
+- Adaptive launcher icon, edge-to-edge iOS-matched dark theme, API 26 minimum, API 36 target, R8 release build,
+  16 KB native-library CI check, unit/lint/build gate, and an emulator launch-smoke workflow.
 
 ## Deliberate differences / remaining product work
 
-- Android free-stack ETAs do not include live traffic and the map has no traffic overlay. The UI
-  labels them traffic-free; do not market traffic parity with iOS.
+- Both apps deliberately show traffic-independent openrouteservice ETAs. Scheduled departure sets
+  itinerary clock times; it does not claim traffic prediction. Neither app should market live traffic.
+- Search ranking, typo handling, proximity, deduplication, and broadening are behavior-matched, but
+  Apple and Android/Photon can return different underlying places for the same typed words. Exact
+  cross-platform typed-search parity requires a shared production geocoder behind the planned
+  backend. Once a coordinate is selected, the route pipeline is shared.
 - Foreground-only location is deliberate. Background navigation remains in Google/Waze/default maps.
 - The vehicle catalog is decoded synchronously once at process startup (about 404 KB/789 records),
   with a built-in fallback if it fails. Measure cold start on release devices before expanding it.

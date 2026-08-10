@@ -2,10 +2,13 @@ package com.evfastroute.core
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.util.Locale
+import kotlin.math.roundToInt
 
 // Open Charge Map response parsing → Charger. Same API + mapping as the iOS OpenChargeMapService,
 // so charger identity/power/connectors/reliability match across platforms. OCM is the one client
-// shared with iOS; OpenRouteService/Photon are Android-only replacements for MapKit.
+// shared with iOS. Both apps use the same Open Charge Map and openrouteservice route contract;
+// only place-search and map rendering remain platform-specific.
 
 // --- Response DTOs (PascalCase to match the OCM JSON; unknown keys ignored) ---
 
@@ -75,14 +78,14 @@ object OpenChargeMap {
         val lat = address.Latitude ?: return null
         val lon = address.Longitude ?: return null
         if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) return null
-        val id = poi.ID ?: return null
+        val id = poi.ID?.takeIf { it >= 0 } ?: return null
 
         // Keep connector-specific power rather than flattening to the fastest (maybe incompatible) plug.
         val recognised = (poi.Connections ?: emptyList()).mapNotNull { connection ->
             val type = connectorFromTitle(connection.ConnectionType?.Title) ?: return@mapNotNull null
             val power = connection.PowerKW ?: return@mapNotNull null
             if (!power.isFinite() || power <= 0.0) return@mapNotNull null
-            ChargerConnector(type = type, maxKw = power.toInt().coerceAtLeast(1))
+            ChargerConnector(type = type, maxKw = power.roundToInt().coerceAtLeast(1))
         }
         if (recognised.isEmpty()) return null
 
@@ -104,7 +107,7 @@ object OpenChargeMap {
         val provider = poi.DataProvider
 
         return Charger(
-            id = "ocm-$id",
+            id = String.format(Locale.US, "00000000-0000-4000-8000-%012x", id).uppercase(Locale.US),
             name = address.Title ?: "Charging station",
             network = operator ?: "Unknown network",
             latitude = lat,
@@ -117,6 +120,7 @@ object OpenChargeMap {
             reliabilityScore = reliabilityEstimate(isOperational, maxKw, numberOfStalls, operator != null),
             pricePerKwh = parsedPrice?.value,
             priceCurrencyCode = parsedPrice?.currencyCode,
+            usageCostText = poi.UsageCost?.trim().takeUnless { it.isNullOrEmpty() },
             detourMinutes = 5, // refined against the route by the app layer
             region = region,
             dataSource = ChargerDataSource.OPEN_CHARGE_MAP,
@@ -174,18 +178,14 @@ object OpenChargeMap {
         val text = usageCost?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val lower = text.lowercase()
         val currency = currencyCode(text, region) ?: return null
-        if (Regex("""\bfree\b|no\s+charge""", RegexOption.IGNORE_CASE).containsMatchIn(text)) {
+        if (lower == "free" || "free charging" in lower) {
             return ParsedPrice(0.0, currency)
         }
-        val rateMatch = Regex(
-            """(\d+(?:[.,]\d+)?)(?:\s*(?:CAD|USD|AUD|NZD|EUR|GBP|CHF|\$|€|£))?\s*(?:/\s*|per\s+)kwh\b""",
-            RegexOption.IGNORE_CASE,
-        ).find(lower) ?: return null
-        val amount = rateMatch.groupValues[1]
-            ?.replace(',', '.')
-            ?.toDoubleOrNull()
-            ?: return null
-        if (!amount.isFinite() || amount < 0.0 || amount > 10.0) return null
+        val marker = lower.indexOf("kwh").takeIf { it >= 0 } ?: return null
+        val prefix = lower.substring(0, marker).replace(',', '.')
+        val amount = Regex("""\d+(?:\.\d+)?""").findAll(prefix).lastOrNull()
+            ?.value?.toDoubleOrNull() ?: return null
+        if (!amount.isFinite() || amount <= 0.0 || amount >= 5.0) return null
         return ParsedPrice(amount, currency)
     }
 
@@ -196,6 +196,9 @@ object OpenChargeMap {
             "USD" in upper || "US\$" in upper -> "USD"
             "EUR" in upper || '€' in text -> "EUR"
             "GBP" in upper || '£' in text -> "GBP"
+            "NOK" in upper -> "NOK"
+            "SEK" in upper -> "SEK"
+            "CHF" in upper -> "CHF"
             '$' in text -> when (region.uppercase()) {
                 "CA" -> "CAD"
                 "US" -> "USD"
@@ -211,9 +214,22 @@ object OpenChargeMap {
                 "GB" -> "GBP"
                 "AT", "BE", "CY", "DE", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IT",
                 "LT", "LU", "LV", "MT", "NL", "PT", "SI", "SK" -> "EUR"
+                "NO" -> "NOK"
+                "SE" -> "SEK"
+                "CH" -> "CHF"
                 else -> null
             }
         }
+    }
+
+    fun currencyCodeForRegion(region: String): String = when (Region.from(region)) {
+        Region.US -> "USD"
+        Region.CA -> "CAD"
+        Region.GB -> "GBP"
+        Region.DE, Region.FR, Region.NL, Region.IT, Region.ES -> "EUR"
+        Region.NO -> "NOK"
+        Region.SE -> "SEK"
+        Region.CH -> "CHF"
     }
 
     private fun isHttpsUrl(value: String): Boolean =

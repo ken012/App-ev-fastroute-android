@@ -33,8 +33,9 @@ defer until after launch.
       route/stop coordinates, optional foreground device location, and ordinary network metadata
       leave the device to provide app functionality. No account, ads, analytics, or data sale are
       present in this version.
-- [ ] Declare foreground approximate/precise location as optional and explain it powers “current
-      location” and arrival prompts; do not declare background location.
+- [ ] Declare foreground approximate/precise location as optional and explain it powers nearby
+      search ranking, “current location,” in-app trip progress, off-route rerouting, and arrival
+      prompts; do not declare background location.
 - [ ] Complete content rating, target audience, ads (“No”), app access, government, financial,
       health, and other Play policy questionnaires accurately.
 - [ ] Review `THIRD_PARTY_NOTICES.md`, OCM provider licenses, OpenFreeMap terms, Photon usage policy,
@@ -59,11 +60,20 @@ defer until after launch.
 - [ ] API 35/36 emulator smoke test and physical tests on at least: API 26–28, API 31–33 with
       approximate-only location, and API 35/36 with gesture navigation/dark mode.
 - [ ] On a clean install, complete onboarding and inspect Plan, Route, Garage, Settings, address
-      search, keyboard/insets, dark mode, and light mode at the smallest and largest supported font
-      sizes. Re-test the update path with existing saved settings so onboarding remains one-time.
+      search, keyboard/insets, and the iOS-matched dark visual system at the smallest and largest
+      supported font sizes. Re-test the update path with existing saved settings so onboarding
+      remains one-time.
 - [ ] Drive a safe real-world route with no charging, one charging stop, multiple charging stops,
       user waypoints, Fewest stops, unavailable network, provider rate limit, denied location, and
       external Google/Waze/default-map handoff.
+- [ ] Schedule an absolute future departure and verify every itinerary clock time; return from
+      results, change both addresses/stops, and calculate again without restarting the app.
+- [ ] Pan during in-app guidance (follow must pause), then test Recenter, Route overview, manual
+      reroute, and a controlled off-route case. Confirm rerouting recalculates chargers and SOC.
+- [ ] Add and relaunch both a catalog vehicle override and a fully manual vehicle profile.
+- [ ] On iOS and Android release builds using the same ORS/OCM keys, select the same saved
+      coordinates and settings and compare road geometry, charging-stop IDs/order, targets, ETA,
+      and route-objective cards. Typed search itself may differ until the shared geocoder ships.
 - [ ] Verify station coordinates/connector power against operator apps; verify the car's edited
       battery/consumption values survive relaunch; verify saved-trip/session expiry behavior.
 - [ ] Internal testing first, then closed testing. Review crash/ANR, battery, network, and tester

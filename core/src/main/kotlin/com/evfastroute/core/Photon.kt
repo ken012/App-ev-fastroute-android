@@ -57,6 +57,7 @@ object Photon {
                 fullAddress = fullAddress,
                 latitude = lat,
                 longitude = lon,
+                countryCode = props.countrycode?.trim()?.uppercase()?.takeIf { it.length == 2 },
             )
         }.distinctBy { "${it.latitude},${it.longitude}" }
     }.getOrNull()

@@ -32,6 +32,17 @@ import kotlin.math.roundToInt
 
 class TripPlanner {
 
+    /** Candidate-generation order is intentionally different from display order. Fewest-stops
+     * runs first so sequence de-duplication cannot discard its minimum-depth route behind an
+     * objective-biased duplicate. This exactly mirrors the iOS optimizer. */
+    internal val candidateGenerationObjectives: List<RouteObjective>
+        get() = listOf(
+            RouteObjective.FEWEST_STOPS,
+            RouteObjective.FASTEST,
+            RouteObjective.RELIABLE,
+            RouteObjective.LOWEST_COST,
+        )
+
     data class Conditions(
         val weatherRangeLossPercent: Double = 0.0,
         val extraLoadKg: Double = 0.0,
@@ -39,7 +50,7 @@ class TripPlanner {
     )
 
     data class Preferences(
-        val minimumChargerSpeedKw: Int = 0,
+        val minimumChargerSpeedKw: Int = 50,
         val preferredNetworks: Set<String> = emptySet(),
         val avoidedNetworks: Set<String> = emptySet(),
         val avoidLowConfidenceStations: Boolean = false,
@@ -67,7 +78,7 @@ class TripPlanner {
             weatherRangeLossPercent = conditions.weatherRangeLossPercent,
             extraLoadKg = conditions.extraLoadKg,
             drivingStyle = conditions.drivingStyle,
-            averageSpeedKph = RangeEstimator.averageSpeedKph(direct.distanceKm, direct.durationMinutes * 60.0),
+            averageSpeedKph = RangeEstimator.averageSpeedKph(direct.distanceKm, direct.durationSeconds),
         )
 
         val energy = EnergyModel.energyPlan(
@@ -78,7 +89,10 @@ class TripPlanner {
             arrivalBufferPercent = arrivalBufferPercent,
         )
         if (!energy.needsCharge) {
-            return Result.Success(listOf(directOption(directMinutes, energy.arrivalIfNoChargePct, direct.geometry)))
+            return Result.Success(listOf(directOption(
+                directMinutes, energy.arrivalIfNoChargePct, direct.geometry, direct.steps,
+                routeVehicle,
+            )))
         }
 
         val chargers = when (val fetched = chargersAlong(direct.geometry)) {
@@ -100,7 +114,7 @@ class TripPlanner {
 
         val seen = mutableSetOf<String>()
         val candidates = mutableListOf<RouteOption>()
-        for (objective in RouteObjective.plannerCases) {
+        for (objective in candidateGenerationObjectives) {
             val prefer = preference(objective, routeVehicle, preferences)
             val sequences = ChargerSequenceSelector.selectChargerSequences(
                 projected = projected,
@@ -210,6 +224,7 @@ class TripPlanner {
             currentSOC = currentSOC,
             arrivalBufferPercent = arrivalBufferPercent,
             legGeometries = legs.map { it.geometry },
+            legSteps = legs.map { it.steps },
         )
     }
 
@@ -241,7 +256,7 @@ class TripPlanner {
     // stops offline stops being presented and stops incompatible stops crowding out a valid plan.
     private fun usableCharger(charger: Charger, vehicle: Vehicle, preferences: Preferences): Boolean {
         if (charger.status == ChargerStatus.OFFLINE) return false
-        if (preferences.avoidLowConfidenceStations && charger.reliabilityScore < 65.0) return false
+        if (preferences.avoidLowConfidenceStations && charger.reliabilityScore < 85.0) return false
         if (ChargerScoring.networkMatches(charger.network, preferences.avoidedNetworks)) return false
         val compatiblePower = charger.compatiblePower(vehicle.connectorTypes) ?: return false
         return compatiblePower >= preferences.minimumChargerSpeedKw
@@ -258,7 +273,13 @@ class TripPlanner {
         else -> { _ -> 0.0 }
     }
 
-    private fun directOption(directMinutes: Int, arrivalPct: Int, geometry: List<LatLon>): RouteOption = RouteOption(
+    private fun directOption(
+        directMinutes: Int,
+        arrivalPct: Int,
+        geometry: List<LatLon>,
+        steps: List<com.evfastroute.core.DrivingStep>,
+        vehicle: Vehicle,
+    ): RouteOption = RouteOption(
         id = "direct",
         objective = RouteObjective.DIRECT,
         supportedObjectives = setOf(RouteObjective.DIRECT),
@@ -273,6 +294,8 @@ class TripPlanner {
         chargingStops = emptyList(),
         itinerary = emptyList(),
         geometry = geometry,
+        estimatedConsumptionKwhPer100Km = vehicle.efficiencyKwhPerKm * 100.0,
+        routeSteps = steps,
     )
 
     /**
@@ -321,7 +344,10 @@ class TripPlanner {
             weatherRangeLossPercent = conditions.weatherRangeLossPercent,
             extraLoadKg = conditions.extraLoadKg,
             drivingStyle = conditions.drivingStyle,
-            averageSpeedKph = RangeEstimator.averageSpeedKph(totalDistanceKm, directMinutes * 60.0),
+            averageSpeedKph = RangeEstimator.averageSpeedKph(
+                totalDistanceKm,
+                legRoutes.sumOf { it.durationSeconds },
+            ),
         )
         // Each user waypoint sits at a leg boundary: waypoint k is the arrival of leg k.
         val waypointProgress = waypoints.indices.map { legStartProgressKm[it + 1] }
@@ -335,8 +361,8 @@ class TripPlanner {
             return Result.Success(
                 listOf(
                     directThroughOption(
-                        directMinutes, legRoutes, waypoints, waypointProgress, totalDistanceKm,
-                        routeVehicle, currentSOC, combinedGeometry,
+                        directMinutes, legRoutes, waypoints, waypointProgress,
+                        routeVehicle, currentSOC, energy.arrivalIfNoChargePct, combinedGeometry,
                     ),
                 ),
             )
@@ -360,7 +386,7 @@ class TripPlanner {
 
         val seen = mutableSetOf<String>()
         val candidates = mutableListOf<RouteOption>()
-        for (objective in RouteObjective.plannerCases) {
+        for (objective in candidateGenerationObjectives) {
             val prefer = preference(objective, routeVehicle, preferences)
             val sequences = ChargerSequenceSelector.selectChargerSequences(
                 projected = projected,
@@ -461,6 +487,7 @@ class TripPlanner {
             currentSOC = currentSOC,
             arrivalBufferPercent = arrivalBufferPercent,
             legGeometries = legs.map { it.geometry },
+            legSteps = legs.map { it.steps },
         )
     }
 
@@ -469,9 +496,9 @@ class TripPlanner {
         legRoutes: List<RouteLeg>,
         waypoints: List<PlaceCandidate>,
         waypointProgress: List<Double>,
-        totalDistanceKm: Double,
         vehicle: Vehicle,
         currentSOC: Double,
+        finalArrivalBatteryPercent: Int,
         geometry: List<LatLon>,
     ): RouteOption {
         val capacity = maxOf(1.0, vehicle.batteryCapacityKwh)
@@ -483,7 +510,6 @@ class TripPlanner {
             val batt = (currentSOC - waypointProgress[k] * socPerKm).roundToInt().coerceIn(0, 100)
             itinerary.add(ItineraryStop(wp.placeName, ItineraryStop.Kind.VISIT, elapsed, batt))
         }
-        val arrivalPct = (currentSOC - totalDistanceKm * socPerKm).roundToInt().coerceIn(0, 100)
         return RouteOption(
             id = "direct",
             objective = RouteObjective.DIRECT,
@@ -494,13 +520,17 @@ class TripPlanner {
             drivingMinutes = directMinutes,
             chargingMinutes = 0,
             detourMinutes = 0,
-            arrivalBatteryPercent = arrivalPct,
+            arrivalBatteryPercent = finalArrivalBatteryPercent,
             riskScore = 1.0,
             chargingStops = emptyList(),
             itinerary = itinerary,
             geometry = geometry,
+            estimatedConsumptionKwhPer100Km = vehicle.efficiencyKwhPerKm * 100.0,
             userWaypoints = waypoints,
             userWaypointSegmentIndices = waypoints.indices.toList(),
+            routeSteps = legRoutes.flatMapIndexed { segmentIndex, leg ->
+                leg.steps.map { it.copy(segmentIndex = segmentIndex) }
+            },
         )
     }
 
@@ -520,7 +550,7 @@ class TripPlanner {
             when (val response = OcmClient.chargers(box.minLat, box.minLon, box.maxLat, box.maxLon)) {
                 is ServiceResult.Success -> {
                     successfulRequests++
-                    response.value.forEach { chargers[it.id] = it }
+                    response.value.forEach { charger -> chargers.putIfAbsent(charger.id, charger) }
                 }
                 is ServiceResult.Failure -> {
                     firstFailure = firstFailure ?: response.error

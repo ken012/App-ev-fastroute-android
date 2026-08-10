@@ -62,8 +62,10 @@ API results are licensed under CC BY 4.0. See <https://openrouteservice.org/term
 ## Charging stations
 
 Charging-station records are supplied by Open Charge Map and its listed data providers. The app
-requests only records marked by OCM as open-data licensed (`opendata=true`) and displays the
-specific provider and license returned with every planned charging stop.
+omits OCM's `compact` and `opendata` filters: compact responses remove connector/operator/status
+objects needed for safe routing, while an open-data-only filter can exclude operator-imported
+corridor coverage. The app displays the specific provider and license returned with every planned
+charging stop.
 
 > Charging-station data © Open Charge Map contributors and applicable listed data providers.
 

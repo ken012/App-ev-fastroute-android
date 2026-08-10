@@ -1,6 +1,7 @@
 package com.evfastroute.core
 
 import kotlinx.serialization.Serializable
+import kotlin.math.roundToInt
 
 // Navigation handoff. EV FastRoute plans the trip and the charging stops; a dedicated navigator
 // (Google Maps, Waze, or the system default maps app) does the turn-by-turn — voice, live traffic,
@@ -287,4 +288,59 @@ fun RouteOption.orderedNavigationPoints(): List<NavigationPoint> {
         )
     }
     return items.sortedWith(compareBy({ it.segment }, { it.order })).map { it.point }
+}
+
+/** Pure next-maneuver tracking, behavior-matched to iOS `NavigationTracker`. */
+object ManeuverTracker {
+    data class Progress(val index: Int, val distanceMeters: Double)
+
+    fun current(
+        user: LatLon,
+        maneuvers: List<DrivingStep>,
+        lastReachedIndex: Int,
+        arrivalRadiusMeters: Double = 30.0,
+        previousDistanceMeters: Double? = null,
+    ): Progress? {
+        if (maneuvers.isEmpty()) return null
+        var index = lastReachedIndex.coerceIn(0, maneuvers.lastIndex)
+        while (index < maneuvers.lastIndex) {
+            val point = maneuvers[index].coordinate
+            val distance = Geometry.haversineMeters(
+                user.latitude, user.longitude, point.latitude, point.longitude,
+            )
+            if (distance <= arrivalRadiusMeters) {
+                index++
+                continue
+            }
+            if (previousDistanceMeters != null && distance > previousDistanceMeters + 15.0) {
+                val next = maneuvers[index + 1].coordinate
+                val nextDistance = Geometry.haversineMeters(
+                    user.latitude, user.longitude, next.latitude, next.longitude,
+                )
+                if (nextDistance + 20.0 < distance) {
+                    index++
+                    continue
+                }
+            }
+            return Progress(index, distance)
+        }
+        val last = maneuvers.last()
+        return Progress(
+            maneuvers.lastIndex,
+            Geometry.haversineMeters(
+                user.latitude, user.longitude,
+                last.coordinate.latitude, last.coordinate.longitude,
+            ),
+        )
+    }
+
+    fun formatDistance(meters: Double, usesMiles: Boolean): String {
+        if (usesMiles) {
+            val feet = meters * 3.28084
+            if (feet < 1_000) return "${(feet / 50.0).roundToInt() * 50} ft"
+            return "%.1f mi".format(java.util.Locale.US, meters / 1_609.34)
+        }
+        if (meters < 1_000) return "${maxOf(10, (meters / 10.0).roundToInt() * 10)} m"
+        return "%.1f km".format(java.util.Locale.US, meters / 1_000.0)
+    }
 }

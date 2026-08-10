@@ -15,6 +15,8 @@ data class PlaceCandidate(
     val latitude: Double,
     val longitude: Double,
     val distanceKm: Double? = null,
+    /** ISO 3166-1 alpha-2 code supplied by the geocoder. Nil for legacy/current-location values. */
+    val countryCode: String? = null,
 )
 
 object PlaceRanker {

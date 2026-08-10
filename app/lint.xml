@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- AAPT requires a base launcher resource even though every supported device (API 26+)
+         selects the adaptive icon. The legacy full-square bitmap is therefore unreachable. -->
+    <issue id="IconLauncherShape">
+        <ignore regexp=".*drawable-nodpi/ic_launcher_art\.png" />
+    </issue>
+
+    <!-- Adaptive-icon XML is only legal in a v26-qualified folder. With minSdk 26, lint calls
+         the qualifier redundant, but moving it to mipmap-anydpi makes AAPT reject the resource. -->
+    <issue id="ObsoleteSdkInt">
+        <ignore regexp=".*mipmap-anydpi-v26.*" />
+    </issue>
+</lint>

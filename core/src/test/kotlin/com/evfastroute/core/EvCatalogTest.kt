@@ -10,6 +10,14 @@ import kotlin.test.assertTrue
 class EvCatalogTest {
 
     @Test
+    fun connectorInventoryMatchesIosRoadTripPlanner() {
+        assertEquals(
+            listOf("CCS", "CCS2", "NACS", "CHADEMO", "TYPE2"),
+            ConnectorType.entries.map(ConnectorType::name),
+        )
+    }
+
+    @Test
     fun catalogIsNonEmptyAndCoversMultipleMakes() {
         assertTrue(EvCatalog.presets.isNotEmpty())
         assertTrue(EvCatalog.makeCount >= 10, "expected several makes, got ${EvCatalog.makeCount}")

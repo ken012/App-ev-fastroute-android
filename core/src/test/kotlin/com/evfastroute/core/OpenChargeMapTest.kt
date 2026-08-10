@@ -38,7 +38,7 @@ class OpenChargeMapTest {
         val chargers = OpenChargeMap.parse(sample)
         assertEquals(1, chargers.size)
         val c = chargers[0]
-        assertEquals("ocm-12345", c.id)
+        assertEquals("00000000-0000-4000-8000-000000003039", c.id)
         assertEquals("Supercharger Kingston", c.name)
         assertEquals("Tesla", c.network)
         assertEquals(listOf(ConnectorType.CCS2), c.connectorTypes)
@@ -93,6 +93,8 @@ class OpenChargeMapTest {
         assertEquals(OpenChargeMap.ParsedPrice(0.39, "USD"), OpenChargeMap.parsePricePerKwh("USD 0.39 per kWh", "US"))
         assertEquals(OpenChargeMap.ParsedPrice(0.45, "CAD"), OpenChargeMap.parsePricePerKwh("$2 session plus $0.45/kWh", "CA"))
         assertEquals(OpenChargeMap.ParsedPrice(0.0, "CAD"), OpenChargeMap.parsePricePerKwh("Free", "CA"))
+        assertEquals(OpenChargeMap.ParsedPrice(4.25, "NOK"), OpenChargeMap.parsePricePerKwh("4.25 NOK/kWh", "NO"))
+        assertEquals(OpenChargeMap.ParsedPrice(0.41, "USD"), OpenChargeMap.parsePricePerKwh("USD 0.41/kWh", "CA"))
         assertNull(OpenChargeMap.parsePricePerKwh("$2 connection fee", "CA"))
     }
 

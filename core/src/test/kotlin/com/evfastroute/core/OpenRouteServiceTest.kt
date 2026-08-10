@@ -12,7 +12,12 @@ class OpenRouteServiceTest {
           "features": [
             {
               "type": "Feature",
-              "properties": { "summary": { "distance": 12345.6, "duration": 780.0 } },
+              "properties": {
+                "summary": { "distance": 12345.6, "duration": 780.0 },
+                "segments": [{"steps":[
+                  {"distance":321.0,"instruction":"Turn right onto Main Street","way_points":[1,1]}
+                ]}]
+              },
               "geometry": { "type": "LineString", "coordinates": [ [-74.0, 45.0], [-75.0, 44.5] ] }
             }
           ]
@@ -24,10 +29,15 @@ class OpenRouteServiceTest {
         val leg = OpenRouteService.parse(geojson)!!
         assertEquals(12.3456, leg.distanceKm, 1e-9)
         assertEquals(13, leg.durationMinutes) // 780 s / 60 = 13 min
+        assertEquals(780.0, leg.durationSeconds, 1e-9)
         assertEquals(2, leg.geometry.size)
         // GeoJSON is [lon, lat] → must be swapped into LatLon(lat, lon).
         assertEquals(45.0, leg.geometry[0].latitude, 1e-9)
         assertEquals(-74.0, leg.geometry[0].longitude, 1e-9)
+        assertEquals(1, leg.steps.size)
+        assertEquals("Turn right onto Main Street", leg.steps[0].instruction)
+        assertEquals(321.0, leg.steps[0].distanceMeters, 1e-9)
+        assertEquals(44.5, leg.steps[0].coordinate.latitude, 1e-9)
     }
 
     @Test

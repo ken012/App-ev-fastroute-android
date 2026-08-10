@@ -50,8 +50,9 @@ Results: CC BY 4.0 — https://openrouteservice.org/terms-of-service/
 CHARGING STATIONS
 
 Charging-station data © Open Charge Map contributors and applicable listed data providers.
-EV FastRoute requests opendata=true and displays the provider-specific attribution returned with
-each planned charging stop. https://www.openchargemap.org/about/
+EV FastRoute deliberately omits OCM's compact and opendata filters so connector, operator, status,
+country, and provider-attribution fields needed for safe routing remain available. It displays the
+provider-specific attribution returned with each planned stop. https://www.openchargemap.org/about/
 
 VEHICLE CATALOG
 

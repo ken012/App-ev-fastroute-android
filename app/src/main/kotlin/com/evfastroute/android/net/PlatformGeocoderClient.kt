@@ -93,6 +93,7 @@ class PlatformGeocoderClient(context: Context) {
             fullAddress = formatted.ifBlank { fallbackAddress },
             latitude = latitude,
             longitude = longitude,
+            countryCode = address.countryCode?.trim()?.uppercase()?.takeIf { it.length == 2 },
         )
     }
 }

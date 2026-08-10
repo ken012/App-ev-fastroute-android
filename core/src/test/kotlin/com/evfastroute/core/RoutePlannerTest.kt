@@ -15,16 +15,21 @@ class RoutePlannerTest {
     private fun charger(id: String) = Charger(
         id = id, name = id, network = "Net", latitude = 0.0, longitude = 0.0,
         connectorTypes = listOf(ConnectorType.CCS), maxKw = 150, numberOfStalls = 4,
+        availableStalls = 2, status = ChargerStatus.AVAILABLE,
         reliabilityScore = 90.0, pricePerKwh = 0.5, priceCurrencyCode = "USD",
+        usageCostText = "USD 0.50/kWh", detourMinutes = 7, region = "CA",
         dataProviderTitle = "Test provider", dataProviderLicense = "CC BY 4.0",
+        dataProviderWebsiteUrl = "https://example.com/provider",
     )
 
     @Test
     fun buildRouteWalksStateOfChargeAndCharges() {
+        val step = DrivingStep("Continue straight", 100.0, LatLon(1.0, 2.0))
         val route = RoutePlanner.buildRoute(
             id = "r1", sequence = listOf(charger("A")),
             legDistancesKm = listOf(300.0, 300.0), legDurationMinutes = listOf(180, 180),
             directMinutes = 360, vehicle = vehicle, currentSOC = 80.0, arrivalBufferPercent = 10.0,
+            legSteps = listOf(listOf(step), listOf(step)),
         )!!
         assertEquals(1, route.chargingStops.size)
         assertEquals(12, route.chargingStops[0].arrivalBatteryPercent)   // 80% − 300·socPerKm
@@ -37,6 +42,20 @@ class RoutePlannerTest {
         assertEquals(180, route.itinerary[0].arrivalMinutesFromStart)
         assertEquals("Test provider", route.chargingStops[0].dataProviderTitle)
         assertEquals("CC BY 4.0", route.chargingStops[0].dataProviderLicense)
+        assertEquals("https://example.com/provider", route.chargingStops[0].dataProviderWebsiteUrl)
+        assertEquals("Net", route.chargingStops[0].network)
+        assertEquals(listOf(ConnectorType.CCS), route.chargingStops[0].connectorTypes)
+        assertEquals(150, route.chargingStops[0].maxKw)
+        assertEquals(4, route.chargingStops[0].numberOfStalls)
+        assertEquals(2, route.chargingStops[0].availableStalls)
+        assertEquals(ChargerStatus.AVAILABLE, route.chargingStops[0].status)
+        assertEquals("USD", route.chargingStops[0].priceCurrencyCode)
+        assertEquals("USD 0.50/kWh", route.chargingStops[0].usageCostText)
+        assertEquals(7, route.chargingStops[0].detourMinutes)
+        assertEquals("CA", route.chargingStops[0].region)
+        assertEquals(ChargerDataSource.OPEN_CHARGE_MAP, route.chargingStops[0].dataSource)
+        assertEquals("\$24.75", route.estimatedCostText)
+        assertEquals(listOf(0, 1), route.routeSteps.map { it.segmentIndex })
     }
 
     @Test
@@ -95,12 +114,20 @@ class RoutePlannerTest {
         assertEquals(single.chargingStops, through.chargingStops)
     }
 
-    private fun candidate(id: String, eta: Int, cost: Double, risk: Double, stops: List<String>) = RouteOption(
+    private fun candidate(
+        id: String,
+        eta: Int,
+        cost: Double,
+        risk: Double,
+        stops: List<String>,
+        currency: String = "USD",
+    ) = RouteOption(
         id = id, objective = RouteObjective.VERIFIED, supportedObjectives = emptySet(),
         title = "c", mode = "c", totalEtaMinutes = eta, drivingMinutes = eta, chargingMinutes = 0,
         detourMinutes = 0, arrivalBatteryPercent = 20, riskScore = risk,
         chargingStops = stops.map { ChargingStop(it, it, 0.0, 0.0, 20, 60, 10) },
         itinerary = emptyList(), estimatedChargingCostValue = cost,
+        estimatedChargingCostCurrencyCode = currency,
     )
 
     @Test
@@ -145,5 +172,14 @@ class RoutePlannerTest {
         )!!
         assertNull(unknownRoute.estimatedChargingCostValue)
         assertTrue(RouteObjective.LOWEST_COST !in RoutePlanner.optimize(listOf(unknownRoute)).flatMap { it.supportedObjectives })
+
+        val usd = candidate("usd", eta = 100, cost = 20.0, risk = 4.0, stops = listOf("u"), currency = "USD")
+        val cad = candidate("cad", eta = 110, cost = 10.0, risk = 5.0, stops = listOf("c"), currency = "CAD")
+        val mixedOptions = RoutePlanner.optimize(listOf(usd, cad))
+        assertTrue(mixedOptions.none { RouteObjective.LOWEST_COST in it.supportedObjectives })
+
+        val missingCurrency = usd.copy(estimatedChargingCostCurrencyCode = null)
+        val incompleteOptions = RoutePlanner.optimize(listOf(missingCurrency))
+        assertTrue(incompleteOptions.none { RouteObjective.LOWEST_COST in it.supportedObjectives })
     }
 }

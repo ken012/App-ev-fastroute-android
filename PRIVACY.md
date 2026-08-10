@@ -24,11 +24,12 @@ an EV FastRoute-operated proxy; the same request data is still needed to provide
 
 ## Device location
 
-Location access is optional and foreground-only. If allowed, it is used to set the trip's starting
-point and to offer an arrival-confirmation prompt during a guided external-navigation session. EV
-FastRoute does not request background location and does not automatically advance the itinerary.
-Location samples are not retained after the active in-app operation, except that a trip you
-explicitly save contains the coordinates you selected.
+Location access is optional and foreground-only. If allowed, it is used to rank nearby search
+results, set the trip's starting point, follow progress during the in-app guidance screen, detect a
+possible off-route condition, recalculate a route only when needed, and offer arrival-confirmation
+prompts. EV FastRoute does not request background location and does not automatically advance the
+itinerary. Location samples are not retained after the active in-app operation, except that a trip
+you explicitly save contains the coordinates you selected.
 
 ## Data stored on your device
 

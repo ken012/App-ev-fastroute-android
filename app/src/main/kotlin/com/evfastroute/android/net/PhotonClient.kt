@@ -3,7 +3,6 @@ package com.evfastroute.android.net
 import com.evfastroute.android.BuildConfig
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.Photon
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 
 // Photon (OSM) address search — Android's free MKLocalSearch replacement. Keyless. Results feed
@@ -20,6 +19,8 @@ object PhotonClient {
         limit: Int = 15,
     ): ServiceResult<List<PlaceCandidate>> {
         if (query.isBlank()) return ServiceResult.Success(emptyList())
+        val endpoint = configuredHttpsUrl(BuildConfig.PHOTON_BASE_URL, "api/")
+            ?: return ServiceResult.Failure(ServiceFailure(ServiceFailureKind.CONFIGURATION))
 
         val anchorKey = if (anchorLat != null && anchorLon != null) {
             String.format(java.util.Locale.US, "%.3f,%.3f", anchorLat, anchorLon)
@@ -29,7 +30,7 @@ object PhotonClient {
         val cacheKey = "${query.trim().lowercase()}|$anchorKey|$limit"
         cache.get(cacheKey)?.let { return ServiceResult.Success(it) }
 
-        val builder = "${BuildConfig.PHOTON_BASE_URL.trimEnd('/')}/api/".toHttpUrl().newBuilder()
+        val builder = endpoint.newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("limit", limit.coerceIn(1, 50).toString())
         if (anchorLat != null && anchorLon != null) {

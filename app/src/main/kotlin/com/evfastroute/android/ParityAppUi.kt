@@ -1,6 +1,8 @@
 package com.evfastroute.android
 
 import android.Manifest
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,9 +32,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddCircle
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -61,7 +65,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
@@ -87,6 +91,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -103,7 +108,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -114,19 +121,31 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.evfastroute.android.map.RouteMap
+import com.evfastroute.android.map.RouteMapCameraMode
 import com.evfastroute.android.nav.LocationProvider
 import com.evfastroute.android.nav.NavLauncher
+import com.evfastroute.core.ChargerDataSource
+import com.evfastroute.core.ChargerStatus
+import com.evfastroute.core.ChargingStop
 import com.evfastroute.core.EvCatalog
 import com.evfastroute.core.EvPreset
 import com.evfastroute.core.ConnectorType
+import com.evfastroute.core.Geometry
 import com.evfastroute.core.ItineraryStop
 import com.evfastroute.core.LatLon
+import com.evfastroute.core.ManeuverTracker
 import com.evfastroute.core.NavigationApp
 import com.evfastroute.core.PlaceCandidate
 import com.evfastroute.core.RangeDrivingStyle
 import com.evfastroute.core.Region
+import com.evfastroute.core.RouteObjective
 import com.evfastroute.core.RouteOption
 import com.evfastroute.core.Units
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Calendar
+import java.util.Locale
 
 private enum class AppSection(val label: String, val icon: ImageVector) {
     PLAN("Plan", Icons.Filled.ElectricCar),
@@ -136,6 +155,23 @@ private enum class AppSection(val label: String, val icon: ImageVector) {
 }
 
 private enum class SearchKind { START, DESTINATION, WAYPOINT }
+
+private enum class NetworkPickerKind { PREFERRED, AVOIDED }
+
+private val weatherRangeChoices = listOf(
+    0f to "Mild",
+    8f to "Hot / strong A/C (−8%)",
+    10f to "Cool or wet (−10%)",
+    20f to "Cold (−20%)",
+    35f to "Freezing (−35%)",
+)
+
+private val tripLoadChoices = listOf(
+    0f to "Driver only",
+    150f to "Passengers + bags",
+    300f to "Full load",
+    500f to "Very heavy",
+)
 
 private data class AddressSearchTarget(
     val kind: SearchKind,
@@ -157,7 +193,6 @@ private data class AddressSearchTarget(
 @Composable
 fun ParityPlannerApp(
     vm: TripViewModel = viewModel(),
-    onThemeChanged: (Boolean) -> Unit = {},
 ) {
     if (!vm.hasOnboarded) {
         EvGradientBackground {
@@ -171,6 +206,20 @@ fun ParityPlannerApp(
         EvGradientBackground { ParityLicensesScreen(vm::hideLicenses) }
         return
     }
+    vm.informationPage?.let { page ->
+        BackHandler(onBack = vm::hideInformation)
+        EvGradientBackground {
+            ParityInformationScreen(
+                page = page,
+                onClose = vm::hideInformation,
+                onShowLicenses = {
+                    vm.hideInformation()
+                    vm.showLicenses()
+                },
+            )
+        }
+        return
+    }
     if (vm.isEditingVehicle) {
         BackHandler(onBack = vm::hideVehicleEditor)
         EvGradientBackground { ParityVehicleEditor(vm) }
@@ -179,12 +228,17 @@ fun ParityPlannerApp(
     if (vm.isPickingVehicle) {
         BackHandler(onBack = vm::hideVehiclePicker)
         EvGradientBackground {
-            ParityVehiclePicker(
-                current = vm.selectedPreset,
-                usesMiles = vm.usesMiles,
-                onSelect = vm::selectPreset,
-                onClose = vm::hideVehiclePicker,
-            )
+            if (vm.pickerShowsGarageOnly) {
+                GarageVehiclePicker(vm = vm, onClose = vm::hideVehiclePicker)
+            } else {
+                ParityVehiclePicker(
+                    current = vm.selectedPreset,
+                    usesMiles = vm.usesMiles,
+                    onSelect = vm::selectPreset,
+                    onCreateCustom = vm::showCustomVehicleEditor,
+                    onClose = vm::hideVehiclePicker,
+                )
+            }
         }
         return
     }
@@ -207,10 +261,13 @@ fun ParityPlannerApp(
     var useLocationAsStartAfterGrant by remember { mutableStateOf(false) }
     val oneShotLocation = remember(context) { LocationProvider(context) }
 
-    fun setStartFromDeviceLocation() {
+    fun sampleDeviceLocation(useAsStart: Boolean) {
         oneShotLocation.oneShot(
-            onSample = { lat, lon, _, _ -> vm.useCurrentLocation(lat, lon) },
-            onUnavailable = vm::reportLocationUnavailable,
+            onSample = { lat, lon, accuracy, _ ->
+                if (useAsStart) vm.useCurrentLocation(lat, lon, accuracy)
+                else vm.updateCurrentLocationAnchor(lat, lon, accuracy)
+            },
+            onUnavailable = { if (useAsStart) vm.reportLocationUnavailable() },
         )
     }
 
@@ -218,8 +275,10 @@ fun ParityPlannerApp(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { grants ->
         hasLocationPermission = grants.values.any { it } || hasForegroundLocationPermission()
-        if (useLocationAsStartAfterGrant) {
-            if (hasLocationPermission) setStartFromDeviceLocation() else vm.reportLocationPermissionDenied()
+        if (hasLocationPermission) {
+            sampleDeviceLocation(useLocationAsStartAfterGrant)
+        } else if (useLocationAsStartAfterGrant) {
+            vm.reportLocationPermissionDenied()
         }
         useLocationAsStartAfterGrant = false
     }
@@ -228,7 +287,7 @@ fun ParityPlannerApp(
         useLocationAsStartAfterGrant = useAsStart
         if (hasForegroundLocationPermission()) {
             hasLocationPermission = true
-            if (useAsStart) setStartFromDeviceLocation()
+            sampleDeviceLocation(useAsStart)
         } else {
             permissionLauncher.launch(
                 arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
@@ -241,21 +300,28 @@ fun ParityPlannerApp(
     if (activeSession != null && activeSession.currentPoint != null && hasLocationPermission) {
         DisposableEffect(lifecycleOwner, activeSession.currentPoint) {
             val provider = LocationProvider(context)
+            fun startProvider() {
+                provider.start { lat, lon, accuracy, time ->
+                    vm.onLocationSample(lat, lon, accuracy, time)
+                }
+            }
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_RESUME -> {
                         hasLocationPermission = hasForegroundLocationPermission()
-                        if (hasLocationPermission) {
-                            provider.start { lat, lon, accuracy, time ->
-                                vm.onLocationSample(lat, lon, accuracy, time)
-                            }
-                        }
+                        if (hasLocationPermission) startProvider()
                     }
                     Lifecycle.Event.ON_PAUSE -> provider.stop()
                     else -> Unit
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
+            // Effects are commonly installed after the Activity is already resumed, in which
+            // case no lifecycle event is replayed. Begin tracking immediately for a newly started
+            // guided trip instead of waiting for a background/foreground cycle.
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                startProvider()
+            }
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(observer)
                 provider.stop()
@@ -264,7 +330,7 @@ fun ParityPlannerApp(
     }
 
     EvGradientBackground {
-        if (vm.isGuidedNavigationOpen && vm.navSession != null && vm.selectedOption != null) {
+        if (vm.isGuidedNavigationOpen && vm.navSession != null && vm.activeNavigationRoute != null) {
             BackHandler(onBack = vm::dismissGuidedNavigation)
             GuidedNavigationScreen(
                 vm = vm,
@@ -277,7 +343,6 @@ fun ParityPlannerApp(
                 hasLocationPermission = hasLocationPermission,
                 onRequestLocation = { requestLocationPermission(false) },
                 onUseCurrentLocation = { requestLocationPermission(true) },
-                onThemeChanged = onThemeChanged,
             )
         }
     }
@@ -289,60 +354,183 @@ private fun GuidedNavigationScreen(
     hasLocationPermission: Boolean,
     onRequestLocation: () -> Unit,
 ) {
-    val option = vm.selectedOption ?: return
+    val option = vm.activeNavigationRoute ?: return
     val session = vm.navSession ?: return
     val destination = vm.destination
+    var maneuverIndex by remember(option.id) { mutableIntStateOf(0) }
+    var distanceToManeuver by remember(option.id) { mutableStateOf<Double?>(null) }
+    var previousManeuverDistance by remember(option.id) { mutableStateOf<Double?>(null) }
+    var offRouteSamples by remember(option.id) { mutableIntStateOf(0) }
+    var cameraMode by remember(option.id) { mutableStateOf(RouteMapCameraMode.FOLLOWING) }
+    var cameraActionToken by remember(option.id) { mutableIntStateOf(0) }
+    val currentManeuver = option.routeSteps.getOrNull(maneuverIndex)
+
+    LaunchedEffect(vm.currentLocation, option.id) {
+        val location = vm.currentLocation ?: return@LaunchedEffect
+        val progress = ManeuverTracker.current(
+            user = location,
+            maneuvers = option.routeSteps,
+            lastReachedIndex = maneuverIndex,
+            previousDistanceMeters = previousManeuverDistance,
+        )
+        if (progress != null) {
+            maneuverIndex = progress.index
+            distanceToManeuver = progress.distanceMeters
+            previousManeuverDistance = progress.distanceMeters
+        }
+
+        // Match iOS: three consecutive accurate samples more than 120 m from the route trigger a
+        // complete EV reroute (road geometry + chargers + battery plan), never a map-only patch.
+        val accurateEnoughForOffRoute = vm.currentLocationAccuracyMeters?.let { it <= 100.0 } == true
+        if (option.geometry.size > 1 && accurateEnoughForOffRoute) {
+            val distanceToRoute = Geometry.distanceToPolylineMeters(location, option.geometry)
+            offRouteSamples = if (distanceToRoute > 120.0) offRouteSamples + 1 else 0
+            if (offRouteSamples >= 3 && !vm.isRerouting) {
+                offRouteSamples = 0
+                val segment = option.routeSteps.getOrNull(progress?.index ?: maneuverIndex)?.segmentIndex ?: 0
+                vm.rerouteActiveTrip(segment)
+            }
+        } else {
+            offRouteSamples = 0
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         RouteMap(
             routeGeometry = option.geometry,
             chargers = option.chargingStops.map { LatLon(it.latitude, it.longitude) },
-            start = vm.start?.let { LatLon(it.latitude, it.longitude) },
+            start = vm.navigationOrigin ?: vm.start?.let { LatLon(it.latitude, it.longitude) },
             destination = destination?.let { LatLon(it.latitude, it.longitude) },
             waypoints = option.userWaypoints.map { LatLon(it.latitude, it.longitude) },
             userLocation = vm.currentLocation,
-            followUser = hasLocationPermission && vm.currentLocation != null,
+            cameraMode = if (hasLocationPermission && vm.currentLocation != null) {
+                cameraMode
+            } else {
+                RouteMapCameraMode.OVERVIEW
+            },
+            cameraActionToken = cameraActionToken,
+            onManualInteraction = { cameraMode = RouteMapCameraMode.MANUAL },
             fallbackCenter = vm.region.searchCenter,
             modifier = Modifier.fillMaxSize(),
         )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(150.dp)
+                .height(230.dp)
                 .align(Alignment.TopCenter)
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.78f), Color.Transparent))),
         )
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            FilledIconButton(
-                onClick = vm::dismissGuidedNavigation,
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = Color.Black.copy(alpha = 0.58f),
-                    contentColor = Color.White,
-                ),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Icon(Icons.Filled.Close, contentDescription = "Close navigation map")
+                FilledIconButton(
+                    onClick = vm::dismissGuidedNavigation,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = Color.Black.copy(alpha = 0.58f),
+                        contentColor = Color.White,
+                    ),
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close navigation map")
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Trip in progress", style = MaterialTheme.typography.labelLarge, color = EvMint)
+                    Text(
+                        session.currentPoint?.name ?: destination?.placeName.orEmpty(),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Surface(shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.58f)) {
+                    Text(
+                        formatDuration(option.totalEtaMinutes),
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                    )
+                }
             }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Trip in progress", style = MaterialTheme.typography.labelLarge, color = EvMint)
-                Text(
-                    session.currentPoint?.name ?: destination?.placeName.orEmpty(),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            if (vm.currentLocation != null && currentManeuver != null && distanceToManeuver != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color.Black.copy(alpha = 0.72f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Filled.Navigation, contentDescription = null, tint = EvMint)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                ManeuverTracker.formatDistance(distanceToManeuver!!, vm.usesMiles),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = EvMint,
+                            )
+                            Text(
+                                currentManeuver.instruction,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
             }
-            Surface(shape = RoundedCornerShape(16.dp), color = Color.Black.copy(alpha = 0.58f)) {
-                Text(
-                    formatDuration(option.totalEtaMinutes),
-                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                )
+            if (vm.isRerouting) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.Black.copy(alpha = 0.72f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = EvMint)
+                        Text("Recalculating the complete EV route…", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            vm.navigationError?.let { message ->
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.92f),
+                ) {
+                    Text(
+                        message,
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp, bottom = 80.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            NavigationMapControl(Icons.Filled.MyLocation, "Recenter") {
+                cameraMode = RouteMapCameraMode.FOLLOWING
+                cameraActionToken += 1
+            }
+            NavigationMapControl(Icons.Filled.Map, "Route overview") {
+                cameraMode = RouteMapCameraMode.OVERVIEW
+                cameraActionToken += 1
+            }
+            NavigationMapControl(Icons.Filled.Refresh, "Reroute") {
+                vm.rerouteActiveTrip(currentManeuver?.segmentIndex ?: 0)
             }
         }
 
@@ -364,16 +552,29 @@ private fun GuidedNavigationScreen(
 }
 
 @Composable
+private fun NavigationMapControl(icon: ImageVector, label: String, onClick: () -> Unit) {
+    FilledIconButton(
+        onClick = onClick,
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = Color.Black.copy(alpha = 0.68f),
+            contentColor = Color.White,
+        ),
+    ) {
+        Icon(icon, contentDescription = label)
+    }
+}
+
+@Composable
 private fun AppShell(
     vm: TripViewModel,
     hasLocationPermission: Boolean,
     onRequestLocation: () -> Unit,
     onUseCurrentLocation: () -> Unit,
-    onThemeChanged: (Boolean) -> Unit,
 ) {
     var selectedSection by rememberSaveable { mutableStateOf(AppSection.PLAN) }
     var searchTarget by remember { mutableStateOf<AddressSearchTarget?>(null) }
     var observedPlanning by remember { mutableStateOf(false) }
+    var requestedSearchAnchorLocation by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(vm.isPlanning) {
         if (vm.isPlanning) {
@@ -381,6 +582,17 @@ private fun AppShell(
         } else if (observedPlanning) {
             if (vm.options.isNotEmpty()) selectedSection = AppSection.ROUTE
             observedPlanning = false
+        }
+    }
+
+    LaunchedEffect(searchTarget?.kind, vm.currentLocation, vm.start, vm.destination) {
+        if (searchTarget != null &&
+            vm.start == null && vm.destination == null &&
+            vm.currentLocation == null &&
+            !requestedSearchAnchorLocation
+        ) {
+            requestedSearchAnchorLocation = true
+            onRequestLocation()
         }
     }
 
@@ -403,6 +615,10 @@ private fun AppShell(
             },
         )
         return
+    }
+
+    BackHandler(enabled = selectedSection != AppSection.PLAN) {
+        selectedSection = AppSection.PLAN
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -449,9 +665,13 @@ private fun AppShell(
                         }
                     },
                 )
-                AppSection.ROUTE -> ResultsScreen(vm, padding)
+                AppSection.ROUTE -> ResultsScreen(
+                    vm = vm,
+                    contentPadding = padding,
+                    onEditTrip = { selectedSection = AppSection.PLAN },
+                )
                 AppSection.GARAGE -> GarageScreen(vm, padding)
-                AppSection.SETTINGS -> SettingsTab(vm, padding, onThemeChanged)
+                AppSection.SETTINGS -> SettingsTab(vm, padding)
             }
         }
     }
@@ -492,16 +712,15 @@ private fun AppBottomBar(selected: AppSection, onSelected: (AppSection) -> Unit)
 
 @Composable
 internal fun EvGradientBackground(content: @Composable () -> Unit) {
-    val background = MaterialTheme.colorScheme.background
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.linearGradient(
                     listOf(
-                        background,
-                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f),
-                        background.copy(alpha = 0.98f),
+                        EvBackgroundTop,
+                        EvBackgroundMiddle,
+                        EvBackgroundBottom,
                     ),
                 ),
             ),
@@ -510,15 +729,17 @@ internal fun EvGradientBackground(content: @Composable () -> Unit) {
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .size(260.dp)
+                .offset(x = 90.dp, y = (-80).dp)
                 .blur(70.dp)
-                .background(EvCyan.copy(alpha = 0.18f), CircleShape),
+                .background(EvCyan.copy(alpha = 0.20f), CircleShape),
         )
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .size(280.dp)
+                .offset(x = (-120).dp, y = 80.dp)
                 .blur(85.dp)
-                .background(EvMint.copy(alpha = 0.11f), CircleShape),
+                .background(EvMint.copy(alpha = 0.13f), CircleShape),
         )
         content()
     }
@@ -529,51 +750,51 @@ private fun OnboardingScreen(onContinue: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(22.dp),
+        verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        Spacer(Modifier.weight(0.7f))
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(190.dp)) {
+        Spacer(Modifier.weight(1f))
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(220.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .blur(24.dp)
+                    .blur(20.dp)
                     .background(EvCyan.copy(alpha = 0.18f), CircleShape),
             )
             Icon(
-                Icons.Filled.DirectionsCar,
+                Icons.Filled.ElectricCar,
                 contentDescription = null,
                 tint = EvCyan,
-                modifier = Modifier.size(106.dp),
+                modifier = Modifier.size(100.dp),
             )
             Icon(
                 Icons.Filled.Bolt,
                 contentDescription = null,
                 tint = EvMint,
-                modifier = Modifier.size(46.dp).padding(bottom = 14.dp),
+                modifier = Modifier.size(42.dp).padding(bottom = 12.dp),
             )
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 "EV FastRoute",
-                style = MaterialTheme.typography.displaySmall,
+                style = MaterialTheme.typography.displaySmall.copy(fontSize = 42.sp, lineHeight = 48.sp),
                 textAlign = TextAlign.Center,
             )
             Text(
                 "Plan EV trips by total arrival time, including charging.",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp, lineHeight = 25.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OnboardingFeature(Icons.Filled.Timer, "Optimizes total ETA", "Balances drive time, detours, queues, and charge speed.")
+            OnboardingFeature(Icons.Filled.Timer, "Optimizes total ETA", "Balances drive time, detours, charge speed, and station confidence.")
             OnboardingFeature(Icons.Filled.VerifiedUser, "Station-confidence aware", "Uses operational status, power, and site size as planning signals.")
             OnboardingFeature(Icons.Filled.Public, "International routing", "Supports North America and major European countries.")
         }
         Text(
-            "Charging times, availability and pricing are estimates — always confirm in the operator's app before relying on them.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+            "Charging times and station confidence are estimates; free-stall availability may be unavailable and pricing incomplete. Always confirm in the operator's app.",
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
             textAlign = TextAlign.Center,
         )
         Button(
@@ -584,7 +805,7 @@ private fun OnboardingScreen(onContinue: () -> Unit) {
         ) {
             Text("Get Started", style = MaterialTheme.typography.titleMedium)
         }
-        Spacer(Modifier.weight(0.3f))
+        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -597,15 +818,15 @@ private fun OnboardingFeature(icon: ImageVector, title: String, subtitle: String
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Surface(
-                modifier = Modifier.size(42.dp),
+                modifier = Modifier.size(38.dp),
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, tint = EvMint, modifier = Modifier.size(23.dp))
+                    Icon(icon, contentDescription = null, tint = EvMint, modifier = Modifier.size(20.dp))
                 }
             }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(
                     subtitle,
@@ -698,7 +919,7 @@ private fun PlannerScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("Find Fastest Route", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.weight(1f))
-                    Icon(Icons.Filled.ArrowForward, contentDescription = null)
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                 }
             }
         }
@@ -758,6 +979,7 @@ private fun PlannerTripCard(
                 value = vm.startText,
                 icon = Icons.Filled.MyLocation,
                 onClick = onSearchStart,
+                onClear = vm::clearStart,
             )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 FilledIconButton(
@@ -805,17 +1027,13 @@ private fun PlannerTripCard(
                 value = vm.destinationText,
                 icon = Icons.Filled.Flag,
                 onClick = onSearchDestination,
+                onClear = vm::clearDestination,
             )
 
-            Divider(color = EvDivider)
-            Text("Departure", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ChoiceRow(
-                choices = listOf(0 to "Now", 30 to "+30m", 60 to "+1h", 120 to "+2h"),
-                selected = vm.departureOffsetMinutes,
-                onSelect = vm::setDepartureOffset,
-            )
+            HorizontalDivider(color = EvDivider)
+            ScheduledDepartureControl(vm)
 
-            Divider(color = EvDivider)
+            HorizontalDivider(color = EvDivider)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
                 BatteryDial(vm.currentSocPercent.toInt(), "Now", Modifier.weight(1f))
                 BatteryDial(vm.arrivalBufferPercent.toInt(), "Arrival", Modifier.weight(1f))
@@ -830,7 +1048,7 @@ private fun PlannerTripCard(
             BrandedSlider(
                 label = "Arrival Buffer",
                 value = vm.arrivalBufferPercent,
-                range = 5f..40f,
+                range = 5f..35f,
                 suffix = "%",
                 accent = EvCyan,
                 onChange = vm::updateArrivalBuffer,
@@ -846,6 +1064,7 @@ private fun PlannerAddressRow(
     icon: ImageVector,
     onClick: () -> Unit,
     onRemove: (() -> Unit)? = null,
+    onClear: (() -> Unit)? = null,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -876,12 +1095,120 @@ private fun PlannerAddressRow(
             }
             if (onRemove != null) {
                 IconButton(onClick = onRemove) { Icon(Icons.Filled.Close, contentDescription = "Remove $label") }
+            } else if (onClear != null && value.isNotBlank()) {
+                IconButton(onClick = onClear) { Icon(Icons.Filled.Close, contentDescription = "Clear $label") }
             } else {
                 Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
+
+@Composable
+private fun ScheduledDepartureControl(vm: TripViewModel) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier.testTag("schedule_departure"),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Schedule departure", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (vm.useScheduledDeparture) "Set the trip's planned arrival clock times"
+                    else "Leave now",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = vm.useScheduledDeparture,
+                onCheckedChange = vm::updateUseScheduledDeparture,
+                modifier = Modifier.testTag("schedule_departure_toggle"),
+                colors = brandedSwitchColors(),
+            )
+        }
+
+        if (vm.useScheduledDeparture) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        showDeparturePicker(
+                            context = context,
+                            selectedMillis = vm.scheduledDepartureMillis,
+                            onSelected = vm::updateScheduledDeparture,
+                        )
+                    }
+                    .testTag("leave_at_picker"),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(Icons.Filled.Schedule, contentDescription = null, tint = EvMint)
+                    Text("Leave at", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        departureDateTimeLabel(vm.scheduledDepartureMillis),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = EvMint,
+                        textAlign = TextAlign.End,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun showDeparturePicker(
+    context: android.content.Context,
+    selectedMillis: Long,
+    onSelected: (Long) -> Unit,
+) {
+    val nowMillis = System.currentTimeMillis()
+    val selected = Calendar.getInstance().apply { timeInMillis = selectedMillis.coerceAtLeast(nowMillis) }
+    val chosen = Calendar.getInstance().apply { timeInMillis = selected.timeInMillis }
+
+    val dateDialog = DatePickerDialog(
+        context,
+        { _, year, month, day ->
+            chosen.set(Calendar.YEAR, year)
+            chosen.set(Calendar.MONTH, month)
+            chosen.set(Calendar.DAY_OF_MONTH, day)
+            TimePickerDialog(
+                context,
+                { _, hour, minute ->
+                    chosen.set(Calendar.HOUR_OF_DAY, hour)
+                    chosen.set(Calendar.MINUTE, minute)
+                    chosen.set(Calendar.SECOND, 0)
+                    chosen.set(Calendar.MILLISECOND, 0)
+                    onSelected(chosen.timeInMillis.coerceAtLeast(System.currentTimeMillis()))
+                },
+                selected.get(Calendar.HOUR_OF_DAY),
+                selected.get(Calendar.MINUTE),
+                android.text.format.DateFormat.is24HourFormat(context),
+            ).show()
+        },
+        selected.get(Calendar.YEAR),
+        selected.get(Calendar.MONTH),
+        selected.get(Calendar.DAY_OF_MONTH),
+    )
+    dateDialog.datePicker.minDate = nowMillis
+    dateDialog.show()
+}
+
+private fun departureDateTimeLabel(millis: Long): String =
+    Instant.ofEpochMilli(millis)
+        .atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("EEE, MMM d · h:mm a", Locale.getDefault()))
 
 @Composable
 private fun BatteryDial(value: Int, label: String, modifier: Modifier = Modifier) {
@@ -981,7 +1308,7 @@ private fun VehicleSpecRow(vehicle: EvPreset, batteryHealth: Double) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         SpecCell("Usable pack", "${trimNumber(vehicle.batteryCapacityKwh * batteryHealth / 100)} kWh", Modifier.weight(1f))
         SpecCell("Max DC", "${vehicle.maxDcChargingKw} kW", Modifier.weight(1f))
-        SpecCell("Plug", vehicle.connectorTypes.firstOrNull()?.name ?: "—", Modifier.weight(1f))
+        SpecCell("Plug", vehicle.connectorTypes.firstOrNull()?.displayLabel ?: "—", Modifier.weight(1f))
     }
 }
 
@@ -1010,7 +1337,7 @@ private fun PlannerChargingPreferences(vm: TripViewModel) {
                     colors = brandedSwitchColors(),
                 )
             }
-            Divider(color = EvDivider)
+            HorizontalDivider(color = EvDivider)
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Bolt, contentDescription = null, tint = EvMint)
                 Spacer(Modifier.width(10.dp))
@@ -1021,8 +1348,8 @@ private fun PlannerChargingPreferences(vm: TripViewModel) {
             Slider(
                 value = vm.minimumChargerSpeedKw,
                 onValueChange = vm::updateMinimumChargerSpeed,
-                valueRange = 0f..350f,
-                steps = 13,
+                valueRange = 50f..350f,
+                steps = 11,
             )
         }
     }
@@ -1107,6 +1434,15 @@ private fun brandedSwitchColors() = SwitchDefaults.colors(
 private fun trimNumber(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
 
+private val ConnectorType.displayLabel: String
+    get() = when (this) {
+        ConnectorType.CCS -> "CCS1"
+        ConnectorType.CCS2 -> "CCS2"
+        ConnectorType.NACS -> "NACS/Tesla"
+        ConnectorType.CHADEMO -> "CHAdeMO"
+        ConnectorType.TYPE2 -> "Type 2"
+    }
+
 @Composable
 private fun AddressSearchScreen(
     vm: TripViewModel,
@@ -1128,6 +1464,12 @@ private fun AddressSearchScreen(
     }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    var refreshedForFirstLocation by remember(target) {
+        mutableStateOf(vm.currentLocation != null)
+    }
+    var queryValue by remember(target) {
+        mutableStateOf(TextFieldValue(query, selection = TextRange(0, query.length)))
+    }
 
     fun updateQuery(value: String) {
         when (target.kind) {
@@ -1147,7 +1489,29 @@ private fun AddressSearchScreen(
         onSelected()
     }
 
-    LaunchedEffect(target) { focusRequester.requestFocus() }
+    LaunchedEffect(target) {
+        focusRequester.requestFocus()
+        when (target.kind) {
+            SearchKind.START -> vm.refreshStartSuggestions()
+            SearchKind.DESTINATION -> vm.refreshDestinationSuggestions()
+            SearchKind.WAYPOINT -> waypoint?.let(vm::refreshWaypointSuggestions)
+        }
+    }
+
+    // Search can open before the optional foreground location fix arrives. Re-run an existing
+    // query once when that first fix becomes available so nearby places are ranked from the
+    // driver's position instead of the broad regional fallback. Later GPS ticks deliberately do
+    // not trigger more network searches.
+    LaunchedEffect(target, vm.currentLocation) {
+        if (!refreshedForFirstLocation && vm.currentLocation != null) {
+            refreshedForFirstLocation = true
+            when (target.kind) {
+                SearchKind.START -> vm.refreshStartSuggestions()
+                SearchKind.DESTINATION -> vm.refreshDestinationSuggestions()
+                SearchKind.WAYPOINT -> waypoint?.let(vm::refreshWaypointSuggestions)
+            }
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(top = 14.dp),
@@ -1157,7 +1521,7 @@ private fun AddressSearchScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onCancel) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") }
+            IconButton(onClick = onCancel) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
             Text(
                 target.title,
                 style = MaterialTheme.typography.headlineSmall,
@@ -1168,8 +1532,11 @@ private fun AddressSearchScreen(
         }
 
         OutlinedTextField(
-            value = query,
-            onValueChange = ::updateQuery,
+            value = queryValue,
+            onValueChange = { value ->
+                queryValue = value
+                updateQuery(value.text)
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp)
@@ -1177,8 +1544,11 @@ private fun AddressSearchScreen(
             placeholder = { Text("Search address or place…") },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { updateQuery("") }) {
+                if (queryValue.text.isNotEmpty()) {
+                    IconButton(onClick = {
+                        queryValue = TextFieldValue("")
+                        updateQuery("")
+                    }) {
                         Icon(Icons.Filled.Close, contentDescription = "Clear search")
                     }
                 }
@@ -1308,12 +1678,26 @@ private fun SearchResultRow(candidate: PlaceCandidate, usesMiles: Boolean, onCli
             }
         }
     }
-    Divider(color = EvDivider, modifier = Modifier.padding(start = 58.dp))
+    HorizontalDivider(color = EvDivider, modifier = Modifier.padding(start = 58.dp))
 }
 
 @Composable
-private fun ResultsScreen(vm: TripViewModel, contentPadding: PaddingValues) {
+private fun ResultsScreen(
+    vm: TripViewModel,
+    contentPadding: PaddingValues,
+    onEditTrip: () -> Unit,
+) {
     val selected = vm.selectedOption
+    var selectedChargerStop by remember(selected?.id) { mutableStateOf<ChargingStop?>(null) }
+    selectedChargerStop?.let { stop ->
+        BackHandler { selectedChargerStop = null }
+        ChargerDetailScreen(
+            stop = stop,
+            contentPadding = contentPadding,
+            onBack = { selectedChargerStop = null },
+        )
+        return
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("route_list"),
         contentPadding = PaddingValues(
@@ -1325,7 +1709,7 @@ private fun ResultsScreen(vm: TripViewModel, contentPadding: PaddingValues) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            LargeScreenTitle("Fastest Route") {
+            LargeScreenTitle("Route options") {
                 Row {
                     IconButton(onClick = vm::refreshRoutes, enabled = !vm.isPlanning && vm.options.isNotEmpty()) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Refresh routes", tint = EvMint)
@@ -1337,6 +1721,17 @@ private fun ResultsScreen(vm: TripViewModel, contentPadding: PaddingValues) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = "Start trip", tint = EvMint, modifier = Modifier.size(32.dp))
                     }
                 }
+            }
+        }
+        item {
+            OutlinedButton(
+                onClick = onEditTrip,
+                modifier = Modifier.fillMaxWidth().testTag("edit_trip"),
+                border = BorderStroke(1.dp, EvMint.copy(alpha = 0.45f)),
+            ) {
+                Icon(Icons.Filled.Edit, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Edit trip and search again")
             }
         }
 
@@ -1377,13 +1772,13 @@ private fun ResultsScreen(vm: TripViewModel, contentPadding: PaddingValues) {
                     }
                 }
             }
-            item { RouteSummaryCard(selected) }
-            item { ArrivalTimelineCard(selected, vm.destination?.placeName ?: "Destination", vm.departureOffsetMinutes) }
+            item { RouteSummaryCard(selected, vm.usesMiles) }
+            item { ArrivalTimelineCard(selected, vm.destination?.placeName ?: "Destination") }
 
             if (selected.userWaypoints.isNotEmpty()) {
                 item { PlannedVisitsCard(selected) }
             }
-            item { ChargingStopsCard(selected) }
+            item { ChargingStopsCard(selected, onSelect = { selectedChargerStop = it }) }
 
             if (vm.options.isNotEmpty()) {
                 item {
@@ -1473,7 +1868,7 @@ private fun ResultsMapCard(vm: TripViewModel, option: RouteOption) {
 }
 
 @Composable
-private fun RouteSummaryCard(option: RouteOption) {
+private fun RouteSummaryCard(option: RouteOption, usesMiles: Boolean) {
     GlassCard {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
@@ -1483,29 +1878,64 @@ private fun RouteSummaryCard(option: RouteOption) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SpecCell("Drive", formatDuration(option.drivingMinutes), Modifier.weight(1f))
                 SpecCell("Charge", formatDuration(option.chargingMinutes), Modifier.weight(1f))
-                SpecCell("Stops", option.chargingStops.size.toString(), Modifier.weight(1f))
+                SpecCell("Charge stops", option.chargingStops.size.toString(), Modifier.weight(1f))
                 SpecCell("Arrive", "${option.arrivalBatteryPercent}%", Modifier.weight(1f))
             }
-            Divider(color = EvDivider)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                Icon(Icons.Filled.Tune, contentDescription = null, tint = EvMint, modifier = Modifier.size(18.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(option.objective.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val other = option.supportedObjectives - option.objective
-                    if (other.isNotEmpty()) {
-                        Text(
-                            "Also optimal for: ${other.joinToString { it.mode }}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = EvCyan,
-                        )
+            if (option.chargingStops.isNotEmpty()) {
+                HorizontalDivider(color = EvDivider)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Filled.Tune, contentDescription = null, tint = EvMint, modifier = Modifier.size(18.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(option.objective.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val other = RouteObjective.plannerCases.filter {
+                            it != option.objective && it in option.supportedObjectives
+                        }
+                        if (other.isNotEmpty()) {
+                            Text(
+                                "Also optimal for: ${other.joinToString { it.mode }}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EvCyan,
+                            )
+                        }
                     }
                 }
             }
             option.estimatedCostText?.let { cost ->
-                Divider(color = EvDivider)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Estimated charging cost", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(cost, style = MaterialTheme.typography.titleSmall, color = EvCyan)
+                HorizontalDivider(color = EvDivider)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Est. charging cost", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.weight(1f))
+                    Text("~$cost", style = MaterialTheme.typography.titleSmall, color = EvCyan)
+                }
+            }
+            option.estimatedConsumptionKwhPer100Km?.let { consumption ->
+                HorizontalDivider(color = EvDivider)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.Speed,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        "Conservative route consumption",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        Units.formatConsumption(consumption, usesMiles),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = EvCyan,
+                    )
                 }
             }
         }
@@ -1513,24 +1943,22 @@ private fun RouteSummaryCard(option: RouteOption) {
 }
 
 @Composable
-private fun ArrivalTimelineCard(option: RouteOption, destinationName: String, departureOffsetMinutes: Int) {
-    val departure = remember(option.id, departureOffsetMinutes) {
-        System.currentTimeMillis() + departureOffsetMinutes * 60_000L
-    }
+private fun ArrivalTimelineCard(option: RouteOption, destinationName: String) {
+    val departure = option.plannedDepartureMillis ?: System.currentTimeMillis()
     GlassCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Arrival timeline", style = MaterialTheme.typography.titleMedium)
             option.itinerary.forEach { stop ->
                 TimelineItem(
                     icon = if (stop.kind == ItineraryStop.Kind.CHARGING) Icons.Filled.Bolt else Icons.Filled.LocationOn,
-                    tint = if (stop.kind == ItineraryStop.Kind.CHARGING) EvMint else EvCyan,
+                    tint = if (stop.kind == ItineraryStop.Kind.CHARGING) EvMint else EvIndigo,
                     name = stop.name,
                     detail = "arrive ${clockLabel(departure, stop.arrivalMinutesFromStart)} · ${stop.arrivalBatteryPercent}%",
                 )
             }
             TimelineItem(
                 icon = Icons.Filled.Flag,
-                tint = Color(0xFF75E68A),
+                tint = EvSuccess,
                 name = destinationName,
                 detail = "arrive ${clockLabel(departure, option.totalEtaMinutes)} · ${option.arrivalBatteryPercent}%",
             )
@@ -1556,7 +1984,7 @@ private fun PlannedVisitsCard(option: RouteOption) {
             Text("Planned visits", style = MaterialTheme.typography.titleMedium)
             option.userWaypoints.forEachIndexed { index, waypoint ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = CircleShape, color = Color(0xFF5969D8)) {
+                    Surface(shape = CircleShape, color = EvIndigo) {
                         Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
                             Text("${index + 1}", style = MaterialTheme.typography.labelMedium, color = Color.White)
                         }
@@ -1580,7 +2008,7 @@ private fun PlannedVisitsCard(option: RouteOption) {
 }
 
 @Composable
-private fun ChargingStopsCard(option: RouteOption) {
+private fun ChargingStopsCard(option: RouteOption, onSelect: (ChargingStop) -> Unit) {
     GlassCard {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (option.chargingStops.isEmpty()) {
@@ -1596,7 +2024,7 @@ private fun ChargingStopsCard(option: RouteOption) {
                 Text("Recommended charging stops", style = MaterialTheme.typography.titleMedium)
                 option.chargingStops.forEachIndexed { index, stop ->
                     Surface(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().clickable { onSelect(stop) },
                         shape = RoundedCornerShape(18.dp),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f),
                     ) {
@@ -1618,12 +2046,228 @@ private fun ChargingStopsCard(option: RouteOption) {
                                     color = EvCyan,
                                 )
                             }
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "View ${stop.name}",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ChargerDetailScreen(
+    stop: ChargingStop,
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().testTag("charger_detail"),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            top = contentPadding.calculateTopPadding() + 12.dp,
+            end = 16.dp,
+            bottom = contentPadding.calculateBottomPadding() + 34.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to route")
+                }
+                Text("Charger", style = MaterialTheme.typography.headlineLarge)
+            }
+        }
+        item {
+            GlassCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        stop.network.uppercase(Locale.getDefault()),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = EvMint,
+                    )
+                    Text(stop.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ChargerStatusPill(stop.status)
+                        Text(
+                            "• ${chargerRegionName(stop.region)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ChargerMetricTile(
+                        title = "Max speed",
+                        value = "${stop.maxKw} kW",
+                        icon = Icons.Filled.Bolt,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ChargerMetricTile(
+                        title = "Stalls",
+                        value = stop.availableStalls?.let { "$it/${stop.numberOfStalls} free" }
+                            ?: "${stop.numberOfStalls} stalls",
+                        icon = Icons.Filled.ElectricCar,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ChargerMetricTile(
+                        title = "Station confidence (est.)",
+                        value = "~${stop.reliabilityScore.toInt()}%",
+                        icon = Icons.Filled.VerifiedUser,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ChargerMetricTile(
+                        title = "Detour (est.)",
+                        value = "~${stop.detourMinutes} min",
+                        icon = Icons.Filled.SwapVert,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ChargerMetricTile(
+                        title = "Price",
+                        value = chargerPriceDisplay(stop),
+                        icon = Icons.Filled.Bolt,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ChargerMetricTile(
+                        title = "Source",
+                        value = if (stop.dataSource == ChargerDataSource.OPEN_CHARGE_MAP) "Open Charge Map" else "Sample",
+                        icon = Icons.Filled.Public,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+        item {
+            GlassCard {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Recommended session", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Most EVs charge fastest between roughly 10% and 80% state of charge — plan to arrive low and leave before the curve tapers.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Plug types")
+                        Text(
+                            stop.connectorTypes.joinToString(", ") { it.displayLabel }.ifEmpty { "Unavailable" },
+                            color = EvMint,
+                            textAlign = TextAlign.End,
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFFFC107).copy(alpha = 0.08f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        Icons.Filled.Security,
+                        contentDescription = null,
+                        tint = Color(0xFFFFC107),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        chargerAttribution(stop),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChargerMetricTile(
+    title: String,
+    value: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)),
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(icon, contentDescription = null, tint = EvMint, modifier = Modifier.size(20.dp))
+            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun ChargerStatusPill(status: ChargerStatus) {
+    val (label, color) = when (status) {
+        ChargerStatus.AVAILABLE -> "Operational" to EvMint
+        ChargerStatus.BUSY -> "Busy" to Color(0xFFFFC107)
+        ChargerStatus.LIMITED -> "Status unknown" to Color(0xFFFFC107)
+        ChargerStatus.OFFLINE -> "Offline" to MaterialTheme.colorScheme.error
+    }
+    Surface(shape = CircleShape, color = color.copy(alpha = 0.14f)) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+        )
+    }
+}
+
+private fun chargerRegionName(regionCode: String): String =
+    if (regionCode.isBlank()) "Region unavailable" else Region.from(regionCode).displayName
+
+private fun chargerPriceDisplay(stop: ChargingStop): String {
+    stop.usageCostText?.takeIf { it.isNotBlank() }?.let { return it }
+    val price = stop.pricePerKwh ?: return "Price unavailable"
+    val currency = stop.priceCurrencyCode ?: return "Price unavailable"
+    val amount = "%.2f".format(Locale.US, price)
+    return when (currency) {
+        "USD", "CAD", "AUD", "NZD" -> "\$$amount $currency/kWh"
+        "EUR" -> "€$amount/kWh"
+        "GBP" -> "£$amount/kWh"
+        "NOK", "SEK" -> "$amount $currency/kWh"
+        "CHF" -> "CHF $amount/kWh"
+        else -> "$amount $currency/kWh"
+    }
+}
+
+private fun chargerAttribution(stop: ChargingStop): String {
+    val source = if (stop.dataSource == ChargerDataSource.OPEN_CHARGE_MAP) "Open Charge Map" else "sample data"
+    val provider = stop.dataProviderTitle?.takeIf { it.isNotBlank() }?.let { " Provider: $it." }.orEmpty()
+    val license = stop.dataProviderLicense?.takeIf { it.isNotBlank() }?.let { " License: $it." }.orEmpty()
+    return "Free-stall availability may be unavailable; station confidence is estimated; and provider pricing may be incomplete or out of date. Always confirm in the network's own app. Source: $source.$provider$license"
 }
 
 @Composable
@@ -1666,7 +2310,7 @@ private fun BeforeYouDriveCard() {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text("Before you drive", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Verify every charging stop, connector, access rule, and availability in the station operator's app. Range, traffic-free ETA, price, and status are estimates.",
+                "Verify every charging stop, connector, access rule, availability, and price in the station operator's app. Range, traffic-free ETA, charge time, and station confidence are estimates; free-stall availability may be unavailable.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -1679,11 +2323,16 @@ private fun BeforeYouDriveCard() {
     }
 }
 
-private fun clockLabel(departureMillis: Long, offsetMinutes: Int): String {
-    val time = java.time.Instant.ofEpochMilli(departureMillis + offsetMinutes * 60_000L)
-        .atZone(java.time.ZoneId.systemDefault())
-        .toLocalTime()
-    return time.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))
+internal fun clockLabel(
+    departureMillis: Long,
+    offsetMinutes: Int,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+    locale: Locale = Locale.getDefault(),
+): String {
+    val departure = Instant.ofEpochMilli(departureMillis).atZone(zoneId)
+    val arrival = Instant.ofEpochMilli(departureMillis + offsetMinutes * 60_000L).atZone(zoneId)
+    val pattern = if (arrival.toLocalDate() == departure.toLocalDate()) "h:mm a" else "MMM d, h:mm a"
+    return arrival.format(DateTimeFormatter.ofPattern(pattern, locale))
 }
 
 private fun formatDuration(minutes: Int): String =
@@ -1703,8 +2352,8 @@ private fun GarageScreen(vm: TripViewModel, contentPadding: PaddingValues) {
     ) {
         item {
             LargeScreenTitle("Garage") {
-                IconButton(onClick = vm::showVehiclePicker) {
-                    Icon(Icons.Filled.AddCircle, contentDescription = "Add vehicle", tint = EvMint, modifier = Modifier.size(32.dp))
+                IconButton(onClick = vm::showCustomVehicleEditor) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add vehicle", tint = EvMint, modifier = Modifier.size(28.dp))
                 }
             }
         }
@@ -1714,18 +2363,13 @@ private fun GarageScreen(vm: TripViewModel, contentPadding: PaddingValues) {
                 vehicle = configured,
                 batteryHealth = vm.batteryHealthFor(preset),
                 selected = preset.catalogIdentifier == vm.selectedPreset.catalogIdentifier,
-                canRemove = vm.garageVehicles.size > 1,
                 onSelect = { vm.selectPreset(preset) },
-                onEdit = {
-                    vm.selectPreset(preset)
-                    vm.showVehicleEditor()
-                },
-                onRemove = { vm.removeGarageVehicle(preset) },
+                onEdit = { vm.showVehicleEditor(preset) },
             )
         }
         item {
             Surface(
-                modifier = Modifier.fillMaxWidth().clickable(onClick = vm::showVehiclePicker),
+                modifier = Modifier.fillMaxWidth().clickable(onClick = vm::showCustomVehicleEditor),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
                 shape = RoundedCornerShape(20.dp),
             ) {
@@ -1748,27 +2392,9 @@ private fun GarageVehicleCard(
     vehicle: EvPreset,
     batteryHealth: Double,
     selected: Boolean,
-    canRemove: Boolean,
     onSelect: () -> Unit,
     onEdit: () -> Unit,
-    onRemove: () -> Unit,
 ) {
-    var showRemoveConfirmation by remember { mutableStateOf(false) }
-    if (showRemoveConfirmation) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showRemoveConfirmation = false },
-            title = { Text("Remove vehicle?") },
-            text = { Text("Remove ${vehicle.displayName} from your Garage? Catalog data will remain available if you add it again.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showRemoveConfirmation = false
-                    onRemove()
-                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { TextButton(onClick = { showRemoveConfirmation = false }) { Text("Cancel") } },
-        )
-    }
-
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         GlassCard(modifier = Modifier.weight(1f).clickable(onClick = onSelect)) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1782,17 +2408,8 @@ private fun GarageVehicleCard(
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            IconButton(onClick = onEdit) {
+            IconButton(onClick = onEdit, modifier = Modifier.testTag("edit_vehicle")) {
                 Icon(Icons.Filled.Edit, contentDescription = "Edit ${vehicle.displayName}", tint = EvMint)
-            }
-            if (canRemove) {
-                IconButton(onClick = { showRemoveConfirmation = true }) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = "Remove ${vehicle.displayName}",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
     }
@@ -1801,29 +2418,95 @@ private fun GarageVehicleCard(
 @Composable
 private fun ParityVehicleEditor(vm: TripViewModel) {
     val preset = vm.configuredPreset
-    var capacity by remember(preset) { mutableStateOf(trimNumber(preset.batteryCapacityKwh)) }
-    var maxPower by remember(preset) { mutableStateOf(preset.maxDcChargingKw.toString()) }
-    var consumption by remember(preset) { mutableStateOf("%.1f".format(preset.efficiencyKwhPerKm * 100.0)) }
-    var health by remember(preset) { mutableStateOf(trimNumber(vm.batteryHealthPercent)) }
-    var connectors by remember(preset) { mutableStateOf(preset.connectorTypes.toSet()) }
+    val isBlankNewVehicle = vm.isCreatingVehicle && !vm.editorHasCatalogSeed
+    val canDelete = !vm.isCreatingVehicle && vm.garageVehicles.size > 1
+    val latestVehicleYear = Calendar.getInstance().get(Calendar.YEAR) + 1
+    var make by remember(preset, vm.isCreatingVehicle, vm.editorHasCatalogSeed, vm.editorSeedRevision) {
+        mutableStateOf(if (isBlankNewVehicle) "" else preset.make)
+    }
+    var model by remember(preset, vm.isCreatingVehicle, vm.editorHasCatalogSeed, vm.editorSeedRevision) {
+        mutableStateOf(if (isBlankNewVehicle) "" else preset.model)
+    }
+    var year by remember(preset, vm.isCreatingVehicle, vm.editorHasCatalogSeed, vm.editorSeedRevision) {
+        mutableIntStateOf(
+            if (isBlankNewVehicle) {
+                Calendar.getInstance().get(Calendar.YEAR)
+            } else {
+                preset.year
+            },
+        )
+    }
+    var capacity by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
+        mutableStateOf(if (isBlankNewVehicle) "75" else trimNumber(preset.batteryCapacityKwh))
+    }
+    var maxPower by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
+        mutableStateOf(if (isBlankNewVehicle) "250" else preset.maxDcChargingKw.toString())
+    }
+    var consumption by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
+        mutableStateOf(if (isBlankNewVehicle) "17.0" else "%.1f".format(preset.efficiencyKwhPerKm * 100.0))
+    }
+    var batteryHealth by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
+        mutableIntStateOf(if (isBlankNewVehicle) 100 else vm.batteryHealthPercent.toInt().coerceIn(60, 100))
+    }
+    var defaultArrivalBuffer by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
+        mutableIntStateOf(if (isBlankNewVehicle) 15 else vm.defaultArrivalBufferPercent)
+    }
+    var connectors by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
+        mutableStateOf(if (isBlankNewVehicle) vm.region.defaultConnectors.toSet() else preset.connectorTypes.toSet())
+    }
     var validationMessage by remember { mutableStateOf<String?>(null) }
+    var showDeleteConfirmation by remember { mutableStateOf(false) }
+
+    if (vm.isPickingVehicle) {
+        BackHandler(onBack = vm::hideVehiclePicker)
+        ParityVehiclePicker(
+            current = vm.selectedPreset,
+            usesMiles = vm.usesMiles,
+            onSelect = vm::selectPreset,
+            onCreateCustom = vm::showCustomVehicleEditor,
+            onClose = vm::hideVehiclePicker,
+        )
+        return
+    }
+
+    if (showDeleteConfirmation) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Delete this vehicle?") },
+            text = { Text("This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = false
+                        vm.deleteVehicleBeingEdited()
+                    },
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text("Cancel") }
+            },
+        )
+    }
 
     fun save() {
         val parsedCapacity = capacity.replace(',', '.').toDoubleOrNull()
         val parsedPower = maxPower.toIntOrNull()
         val parsedConsumption = consumption.replace(',', '.').toDoubleOrNull()
-        val parsedHealth = health.replace(',', '.').toDoubleOrNull()
         validationMessage = if (
             parsedCapacity == null || parsedPower == null ||
-            parsedConsumption == null || parsedHealth == null
+            parsedConsumption == null
         ) {
             "Enter valid numbers in every field."
         } else {
-            vm.saveVehicleOverride(
+            vm.saveVehicle(
+                make = make,
+                model = model,
+                year = year,
                 batteryCapacityKwh = parsedCapacity,
                 maxDcChargingKw = parsedPower,
                 efficiencyKwhPer100Km = parsedConsumption,
-                batteryHealthPercent = parsedHealth,
+                batteryHealthPercent = batteryHealth.toDouble(),
+                defaultArrivalBufferPercent = defaultArrivalBuffer,
                 connectors = connectors,
             )
         }
@@ -1840,28 +2523,15 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = vm::hideVehicleEditor) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Close vehicle editor")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close vehicle editor")
                 }
                 Text(
-                    "Edit Vehicle",
+                    if (vm.isCreatingVehicle) "Add Vehicle" else "Edit Vehicle",
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
                 )
                 TextButton(onClick = ::save) { Text("Save", color = EvMint) }
-            }
-        }
-
-        item {
-            GlassCard {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(preset.displayName, style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "Catalog values are a starting point. Update them for your exact trim, wheels, usable battery, adapters, and current battery health.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
 
@@ -1877,8 +2547,44 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Icon(Icons.Filled.Search, contentDescription = null, tint = EvMint)
-                    Text("Replace from vehicle catalog", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (vm.isCreatingVehicle && !vm.editorHasCatalogSeed) "Choose from vehicle catalog"
+                        else "Replace from vehicle catalog",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        item { SectionLabel("VEHICLE INFO") }
+        item {
+            GlassCard {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = make,
+                        onValueChange = { make = it },
+                        label = { Text("Make") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = model,
+                        onValueChange = { model = it },
+                        label = { Text("Model / trim") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    StepperRow(
+                        label = "Model year",
+                        value = year.toFloat(),
+                        suffix = "",
+                        range = 2010f..latestVehicleYear.toFloat(),
+                        step = 1f,
+                        onChange = { year = it.toInt() },
+                        modifier = Modifier.testTag("vehicle_year"),
+                    )
                 }
             }
         }
@@ -1890,7 +2596,7 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
                     OutlinedTextField(
                         value = capacity,
                         onValueChange = { capacity = it },
-                        label = { Text("Usable battery capacity (kWh)") },
+                        label = { Text("Battery capacity (kWh)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
@@ -1898,7 +2604,7 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
                     OutlinedTextField(
                         value = maxPower,
                         onValueChange = { maxPower = it },
-                        label = { Text("Maximum DC charging (kW)") },
+                        label = { Text("Max DC charge speed (kW)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth(),
@@ -1906,23 +2612,31 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
                     OutlinedTextField(
                         value = consumption,
                         onValueChange = { consumption = it },
-                        label = { Text("Reference consumption (kWh/100 km)") },
+                        label = { Text("Reference use (kWh/100 km)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = health,
-                        onValueChange = { health = it },
-                        label = { Text("Battery health (%)") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.fillMaxWidth(),
+                    StepperRow(
+                        label = "Battery health",
+                        value = batteryHealth.toFloat(),
+                        suffix = "%",
+                        range = 60f..100f,
+                        step = 1f,
+                        onChange = { batteryHealth = it.toInt() },
                     )
                     Text(
                         "Battery health reduces usable capacity without changing the capacity-when-new value.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    StepperRow(
+                        label = "Default arrival buffer",
+                        value = defaultArrivalBuffer.toFloat(),
+                        suffix = "%",
+                        range = 5f..35f,
+                        step = 1f,
+                        onChange = { defaultArrivalBuffer = it.toInt() },
                     )
                 }
             }
@@ -1932,23 +2646,23 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
         item {
             GlassCard(contentPadding = 0.dp) {
                 Column {
-                    ConnectorType.entries.filter { it != ConnectorType.OTHER }.forEachIndexed { index, connector ->
+                    ConnectorType.entries.forEachIndexed { index, connector ->
                         SettingsToggleRow(
-                            label = connector.name,
+                            label = connector.displayLabel,
                             checked = connector in connectors,
                             onCheckedChange = { checked ->
                                 connectors = if (checked) connectors + connector else connectors - connector
                             },
                         )
-                        if (index != ConnectorType.entries.filter { it != ConnectorType.OTHER }.lastIndex) {
-                            Divider(color = EvDivider)
+                        if (index != ConnectorType.entries.lastIndex) {
+                            HorizontalDivider(color = EvDivider)
                         }
                     }
                 }
             }
         }
 
-        preset.sourceName?.let { source ->
+        if (!vm.isCreatingVehicle || vm.editorHasCatalogSeed) preset.sourceName?.let { source ->
             item { SectionLabel("STARTING SPECIFICATION", Modifier.padding(top = 6.dp)) }
             item {
                 GlassCard {
@@ -1984,13 +2698,17 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
                 Text("Save vehicle specifications", style = MaterialTheme.typography.titleMedium)
             }
         }
-        item {
-            OutlinedButton(
-                onClick = vm::resetVehicleOverride,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                Text("Restore catalog specifications")
+        if (canDelete) {
+            item {
+                OutlinedButton(
+                    onClick = { showDeleteConfirmation = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Delete vehicle", color = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }
@@ -2001,13 +2719,14 @@ private fun ParityVehiclePicker(
     current: EvPreset,
     usesMiles: Boolean,
     onSelect: (EvPreset) -> Unit,
+    onCreateCustom: () -> Unit,
     onClose: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val results = remember(query) { EvCatalog.search(query) }
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onClose) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") }
+            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
             Text("Choose your car", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
             TextButton(onClick = onClose) { Text("Close", color = EvMint) }
         }
@@ -2037,6 +2756,15 @@ private fun ParityVehiclePicker(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(vertical = 12.dp, horizontal = 2.dp),
         )
+        OutlinedButton(
+            onClick = onCreateCustom,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Icon(Icons.Filled.Edit, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Enter a vehicle manually")
+        }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(results, key = { it.catalogIdentifier }) { preset ->
                 val selected = preset.catalogIdentifier == current.catalogIdentifier
@@ -2074,6 +2802,180 @@ private fun ParityVehiclePicker(
 }
 
 @Composable
+private fun GarageVehiclePicker(vm: TripViewModel, onClose: () -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().testTag("garage_vehicle_picker"),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+                Text("Select vehicle", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClose) { Text("Close", color = EvMint) }
+            }
+        }
+        item {
+            Text(
+                "Choose a saved vehicle. Add or edit profiles from Garage.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        items(vm.garageVehicles, key = { it.catalogIdentifier }) { preset ->
+            val vehicle = vm.configuredPresetFor(preset)
+            val selected = preset.catalogIdentifier == vm.selectedPreset.catalogIdentifier
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable { vm.selectPreset(preset) },
+                shape = RoundedCornerShape(18.dp),
+                color = if (selected) EvMint.copy(alpha = 0.18f)
+                else MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                border = BorderStroke(
+                    1.dp,
+                    if (selected) EvMint.copy(alpha = 0.55f)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                ),
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(vehicle.displayName, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            pickerSpecLine(vehicle, vm.usesMiles),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (selected) Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = EvMint)
+                }
+            }
+        }
+    }
+}
+
+private data class InformationSection(val title: String, val body: String)
+
+@Composable
+private fun ParityInformationScreen(
+    page: InformationPage,
+    onClose: () -> Unit,
+    onShowLicenses: () -> Unit,
+) {
+    val context = LocalContext.current
+    val title: String
+    val sections: List<InformationSection>
+    when (page) {
+        InformationPage.PRIVACY -> {
+            title = "Privacy Policy"
+            sections = listOf(
+                InformationSection(
+                    "Your privacy",
+                    "EV FastRoute has no account, ads, analytics, or tracking SDKs and does not sell personal information. Vehicle profiles, preferences, saved trips, and active-trip progress stay in app-private storage on this device.",
+                ),
+                InformationSection(
+                    "Location & search",
+                    "Optional foreground location ranks nearby search results, can set the starting point, follows in-app trip progress, supports off-route rerouting, and offers arrival prompts. Typed searches and an approximate anchor are sent to the device geocoder and Photon. Background location is not requested.",
+                ),
+                InformationSection(
+                    "Routes, chargers & maps",
+                    "Selected trip and charging-stop coordinates are sent to openrouteservice for traffic-independent road routing. Route-area boxes are sent to Open Charge Map for station records. OpenFreeMap receives map-tile requests. These providers also receive ordinary network information such as an IP address.",
+                ),
+                InformationSection(
+                    "Control",
+                    "You can deny location, remove saved trips, reset local data in Settings, clear app storage, or uninstall the app. Location samples are not retained after the active operation unless coordinates are part of a trip you explicitly save.",
+                ),
+            )
+        }
+        InformationPage.TERMS -> {
+            title = "Terms of Use"
+            sections = listOf(
+                InformationSection(
+                    "Planning estimates",
+                    "Routes, range, battery state, charge time, station status, pricing, and arrival times are estimates. Weather, speed, battery condition, traffic, closures, queues, and provider data can differ from the plan.",
+                ),
+                InformationSection(
+                    "Vehicle specifications",
+                    "Catalog values are published references, not a live connection to your vehicle. Confirm the exact trim and edit battery capacity, consumption, charging power, model year, health, reserve, and connectors when your car differs.",
+                ),
+                InformationSection(
+                    "Charging stations",
+                    "Open Charge Map is community-maintained and may be incomplete or stale. Sample stations are never used for a navigable route. Verify every planned stop, connector, status, and price in the charging operator's app before relying on it.",
+                ),
+                InformationSection(
+                    "Navigation & safety",
+                    "EV FastRoute provides route overview and basic maneuver guidance, not voice, lane, or live-traffic navigation. Do not interact with the app while driving. Obey road signs, traffic laws, vehicle warnings, and safe driving judgment.",
+                ),
+                InformationSection(
+                    "No warranty",
+                    "The app is provided as-is without a guarantee that a route or station will be usable. To the maximum extent permitted by law, the publisher is not liable for delays, low charge, or reliance on inaccurate third-party data.",
+                ),
+            )
+        }
+        InformationPage.ABOUT -> {
+            title = "About EV FastRoute"
+            sections = listOf(
+                InformationSection(
+                    "EV FastRoute",
+                    "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}). Plan electric road trips by total arrival time, including conservative real-world range and charging sessions.",
+                ),
+                InformationSection(
+                    "Data sources",
+                    "Vehicle references include OpenEV Data v1.24.0. Charging data comes from Open Charge Map. Road routing comes from openrouteservice by HeiGIT. Search uses Photon and the Android device geocoder. Maps use OpenFreeMap and OpenStreetMap data.",
+                ),
+                InformationSection(
+                    "Attribution",
+                    "OpenEV Data is used under CDLA-Permissive-2.0. Charging data © Open Charge Map contributors and listed providers. Routing © openrouteservice.org by HeiGIT; map/search data © OpenStreetMap contributors.",
+                ),
+            )
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close $title")
+                }
+                Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClose) { Text("Close", color = EvMint) }
+            }
+        }
+        items(sections, key = { it.title }) { section ->
+            GlassCard {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text(section.title, style = MaterialTheme.typography.titleMedium)
+                    Text(section.body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            GlassCard {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (page == InformationPage.PRIVACY) {
+                        SettingsLink("Open hosted privacy policy") {
+                            NavLauncher.open(context, BuildConfig.PRIVACY_POLICY_URL)
+                        }
+                    }
+                    SettingsLink("Support") { NavLauncher.open(context, BuildConfig.SUPPORT_URL) }
+                    SettingsLink("Data sources and licenses", onShowLicenses)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ParityLicensesScreen(onClose: () -> Unit) {
     val context = LocalContext.current
     val noticeText = remember(context) {
@@ -2090,7 +2992,7 @@ private fun ParityLicensesScreen(onClose: () -> Unit) {
     ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onClose) { Icon(Icons.Filled.ArrowBack, contentDescription = "Close") }
+                IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close") }
                 Text("Licenses and notices", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = onClose) { Text("Close", color = EvMint) }
             }
@@ -2110,19 +3012,59 @@ private fun ParityLicensesScreen(onClose: () -> Unit) {
 private fun pickerSpecLine(preset: EvPreset, usesMiles: Boolean): String {
     val range = preset.ratedRangeKm?.let { " · ~${Units.formatDistance(it, usesMiles)}" }.orEmpty()
     return "${trimNumber(preset.batteryCapacityKwh)} kWh · ${preset.maxDcChargingKw} kW DC · " +
-        "${preset.connectorTypes.joinToString("/") { it.name }}$range"
+        "${preset.connectorTypes.joinToString("/") { it.displayLabel }}$range"
 }
 
 @Composable
 private fun SettingsTab(
     vm: TripViewModel,
     contentPadding: PaddingValues,
-    onThemeChanged: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
-    var preferredNetworks by remember { mutableStateOf(vm.preferredNetworks.sorted().joinToString(", ")) }
-    var avoidedNetworks by remember { mutableStateOf(vm.avoidedNetworks.sorted().joinToString(", ")) }
     var regionMenuExpanded by remember { mutableStateOf(false) }
+    var weatherMenuExpanded by remember { mutableStateOf(false) }
+    var loadMenuExpanded by remember { mutableStateOf(false) }
+    var showResetConfirmation by remember { mutableStateOf(false) }
+    var networkPicker by remember { mutableStateOf<NetworkPickerKind?>(null) }
+
+    networkPicker?.let { kind ->
+        NetworkPickerDialog(
+            title = if (kind == NetworkPickerKind.PREFERRED) "Preferred Networks" else "Avoided Networks",
+            available = vm.region.defaultNetworks.sorted(),
+            selected = if (kind == NetworkPickerKind.PREFERRED) vm.preferredNetworks else vm.avoidedNetworks,
+            onToggle = { network ->
+                val selected = if (kind == NetworkPickerKind.PREFERRED) vm.preferredNetworks else vm.avoidedNetworks
+                val updated = if (network in selected) selected - network else selected + network
+                if (kind == NetworkPickerKind.PREFERRED) {
+                    vm.updatePreferredNetworks(updated)
+                } else {
+                    vm.updateAvoidedNetworks(updated)
+                }
+            },
+            onClose = { networkPicker = null },
+        )
+    }
+
+    if (showResetConfirmation) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showResetConfirmation = false },
+            title = { Text("Reset all settings?") },
+            text = {
+                Text("Restores default vehicles and preferences and clears saved trips and active-trip progress. This can't be undone.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetConfirmation = false
+                        vm.resetAllToDefaults()
+                    },
+                ) { Text("Reset", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirmation = false }) { Text("Cancel") }
+            },
+        )
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("settings_list"),
@@ -2144,22 +3086,26 @@ private fun SettingsTab(
                         label = "Minimum charger speed",
                         value = vm.minimumChargerSpeedKw,
                         suffix = " kW",
-                        range = 0f..350f,
+                        range = 50f..350f,
                         step = 25f,
                         onChange = vm::updateMinimumChargerSpeed,
                     )
-                    Divider(color = EvDivider)
+                    HorizontalDivider(color = EvDivider)
                     StepperRow(
                         label = "Arrival battery buffer",
                         value = vm.arrivalBufferPercent,
                         suffix = "%",
-                        range = 5f..40f,
+                        range = 5f..35f,
                         step = 1f,
                         onChange = vm::updateArrivalBuffer,
                     )
-                    Divider(color = EvDivider)
-                    SettingsToggleRow("Use miles (mi)", vm.usesMiles, vm::updateUsesMiles)
-                    Divider(color = EvDivider)
+                    HorizontalDivider(color = EvDivider)
+                    SettingsToggleRow(
+                        "Use miles (${if (vm.usesMiles) "mi" else "km"})",
+                        vm.usesMiles,
+                        vm::updateUsesMiles,
+                    )
+                    HorizontalDivider(color = EvDivider)
                     SettingsToggleRow(
                         "Avoid low-confidence chargers",
                         vm.avoidLowConfidenceStations,
@@ -2171,34 +3117,25 @@ private fun SettingsTab(
 
         item { SectionLabel("CHARGING NETWORKS", Modifier.padding(top = 10.dp)) }
         item {
-            GlassCard {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = preferredNetworks,
-                        onValueChange = {
-                            preferredNetworks = it
-                            vm.updatePreferredNetworks(it)
-                        },
-                        label = { Text("Preferred networks") },
-                        placeholder = { Text("Tesla, Electrify America…") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
+            GlassCard(contentPadding = 0.dp) {
+                Column {
+                    SettingsSelectionRow(
+                        label = "Preferred networks",
+                        value = "${vm.preferredNetworks.size} selected",
+                        onClick = { networkPicker = NetworkPickerKind.PREFERRED },
                     )
-                    OutlinedTextField(
-                        value = avoidedNetworks,
-                        onValueChange = {
-                            avoidedNetworks = it
-                            vm.updateAvoidedNetworks(it)
-                        },
-                        label = { Text("Avoided networks") },
-                        placeholder = { Text("Comma-separated") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
+                    HorizontalDivider(color = EvDivider)
+                    SettingsSelectionRow(
+                        label = "Avoided networks",
+                        value = "${vm.avoidedNetworks.size} selected",
+                        onClick = { networkPicker = NetworkPickerKind.AVOIDED },
                     )
+                    HorizontalDivider(color = EvDivider)
                     Text(
                         "Network preferences influence ranking. They never make an incompatible or unreachable charger valid.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
                     )
                 }
             }
@@ -2208,21 +3145,62 @@ private fun SettingsTab(
         item {
             GlassCard {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    BrandedSlider(
-                        label = "Weather range loss",
-                        value = vm.weatherRangeLossPercent,
-                        range = 0f..45f,
-                        suffix = "%",
-                        onChange = vm::updateWeatherRangeLoss,
-                    )
-                    BrandedSlider(
-                        label = "Passengers and cargo",
-                        value = vm.extraLoadKg,
-                        range = 0f..750f,
-                        suffix = " kg",
-                        accent = EvCyan,
-                        onChange = vm::updateExtraLoad,
-                    )
+                    Box {
+                        SettingsDropdownRow(
+                            label = "Expected weather",
+                            value = weatherRangeChoices.firstOrNull { it.first == vm.weatherRangeLossPercent }?.second
+                                ?: "${vm.weatherRangeLossPercent.toInt()}% range loss",
+                            onClick = { weatherMenuExpanded = true },
+                        )
+                        DropdownMenu(
+                            expanded = weatherMenuExpanded,
+                            onDismissRequest = { weatherMenuExpanded = false },
+                        ) {
+                            weatherRangeChoices.forEach { (value, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        vm.updateWeatherRangeLoss(value)
+                                        weatherMenuExpanded = false
+                                    },
+                                    trailingIcon = {
+                                        if (vm.weatherRangeLossPercent == value) {
+                                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = EvMint)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = EvDivider)
+                    Box {
+                        SettingsDropdownRow(
+                            label = "Trip load",
+                            value = tripLoadChoices.firstOrNull { it.first == vm.extraLoadKg }?.second
+                                ?: "${vm.extraLoadKg.toInt()} kg",
+                            onClick = { loadMenuExpanded = true },
+                        )
+                        DropdownMenu(
+                            expanded = loadMenuExpanded,
+                            onDismissRequest = { loadMenuExpanded = false },
+                        ) {
+                            tripLoadChoices.forEach { (value, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        vm.updateExtraLoad(value)
+                                        loadMenuExpanded = false
+                                    },
+                                    trailingIcon = {
+                                        if (vm.extraLoadKg == value) {
+                                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = EvMint)
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = EvDivider)
                     Text("Driving style", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         RangeDrivingStyle.entries.forEach { style ->
@@ -2247,16 +3225,6 @@ private fun SettingsTab(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-            }
-        }
-
-        item { SectionLabel("APPEARANCE", Modifier.padding(top = 10.dp)) }
-        item {
-            GlassCard(contentPadding = 0.dp) {
-                SettingsToggleRow("Dark mode", vm.prefersDarkMode) { enabled ->
-                    vm.updateDarkMode(enabled)
-                    onThemeChanged(enabled)
                 }
             }
         }
@@ -2326,12 +3294,14 @@ private fun SettingsTab(
         item {
             GlassCard {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SettingsLink("Privacy Policy") { NavLauncher.open(context, BuildConfig.PRIVACY_POLICY_URL) }
+                    SettingsLink("Privacy Policy") { vm.showInformation(InformationPage.PRIVACY) }
+                    SettingsLink("Terms of Use") { vm.showInformation(InformationPage.TERMS) }
+                    SettingsLink("About EV FastRoute") { vm.showInformation(InformationPage.ABOUT) }
                     SettingsLink("Support") { NavLauncher.open(context, BuildConfig.SUPPORT_URL) }
                     SettingsLink("Data sources and licenses", vm::showLicenses)
                     SettingsLink("Open Charge Map") { NavLauncher.open(context, "https://openchargemap.org/") }
                     SettingsLink("openrouteservice by HeiGIT") { NavLauncher.open(context, "https://openrouteservice.org/") }
-                    Divider(color = EvDivider, modifier = Modifier.padding(vertical = 8.dp))
+                    HorizontalDivider(color = EvDivider, modifier = Modifier.padding(vertical = 8.dp))
                     Text(
                         "Search terms, route coordinates, and charger-area queries are sent to configured providers. Location is foreground-only and optional.",
                         style = MaterialTheme.typography.bodySmall,
@@ -2342,6 +3312,25 @@ private fun SettingsTab(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     )
+                }
+            }
+        }
+
+        item { SectionLabel("DATA", Modifier.padding(top = 10.dp)) }
+        item {
+            GlassCard {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Your vehicles, saved trips, and preferences are stored only on this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(
+                        onClick = { showResetConfirmation = true },
+                        modifier = Modifier.testTag("reset_all_settings"),
+                    ) {
+                        Text("Reset all settings", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
@@ -2356,9 +3345,10 @@ private fun StepperRow(
     range: ClosedFloatingPointRange<Float>,
     step: Float,
     onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -2402,8 +3392,64 @@ private fun SettingsLink(label: String, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+@Composable
+private fun SettingsSelectionRow(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(6.dp))
+        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SettingsDropdownRow(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(4.dp))
+        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun NetworkPickerDialog(
+    title: String,
+    available: List<String>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(title) },
+        text = {
+            Column {
+                available.forEach { network ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { onToggle(network) }.padding(vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(network, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                        if (network in selected) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = EvMint)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Done", color = EvMint) } },
+    )
 }
 
 @Composable

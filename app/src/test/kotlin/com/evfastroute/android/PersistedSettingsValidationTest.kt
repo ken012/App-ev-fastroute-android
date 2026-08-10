@@ -1,6 +1,7 @@
 package com.evfastroute.android
 
 import com.evfastroute.core.ConnectorType
+import java.util.Calendar
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -15,7 +16,55 @@ class PersistedSettingsValidationTest {
         assertTrue(valid.isValid())
         assertFalse(valid.copy(batteryCapacityKwh = Double.NaN).isValid())
         assertFalse(valid.copy(efficiencyKwhPerKm = 0.0).isValid())
+        assertFalse(valid.copy(batteryCapacityKwh = 14.9).isValid())
+        assertFalse(valid.copy(maxDcChargingKw = 24).isValid())
+        assertTrue(valid.copy(efficiencyKwhPerKm = 0.051).isValid())
+        assertFalse(valid.copy(efficiencyKwhPerKm = 0.501).isValid())
+        assertFalse(valid.copy(batteryHealthPercent = 59.9).isValid())
+        assertFalse(valid.copy(defaultArrivalBufferPercent = 36).isValid())
         assertFalse(valid.copy(connectorNames = listOf("not-a-connector")).isValid())
+    }
+
+    @Test
+    fun customVehicleUsesTheSameSafetyBoundsAsIos() {
+        val valid = CustomVehicleRecord(
+            identifier = "custom:test",
+            make = "Example",
+            model = "EV",
+            year = 2026,
+            batteryCapacityKwh = 75.0,
+            maxDcChargingKw = 200,
+            efficiencyKwhPerKm = 0.20,
+            connectorNames = listOf(ConnectorType.CCS.name),
+        )
+        assertTrue(valid.isValid())
+        assertEquals("2026 Example EV", valid.toPreset().displayName)
+        assertFalse(valid.copy(year = 2009).isValid())
+        assertFalse(valid.copy(year = Calendar.getInstance().get(Calendar.YEAR) + 2).isValid())
+        assertFalse(valid.copy(efficiencyKwhPerKm = 0.05).isValid())
+        assertFalse(valid.copy(connectorNames = emptyList()).isValid())
+        assertFalse(valid.copy(sourceCatalogIdentifier = "x".repeat(201)).isValid())
+    }
+
+    @Test
+    fun customGarageProfileKeepsItsOwnIdentityAndCatalogAttribution() {
+        val source = com.evfastroute.core.EvCatalog.presets.first { it.sourceName != null }
+        val profile = CustomVehicleRecord(
+            identifier = "custom:driver-trim",
+            make = source.make,
+            model = source.model,
+            year = source.year,
+            batteryCapacityKwh = source.batteryCapacityKwh,
+            maxDcChargingKw = source.maxDcChargingKw,
+            efficiencyKwhPerKm = source.efficiencyKwhPerKm,
+            connectorNames = source.connectorTypes.map { it.name },
+            sourceCatalogIdentifier = source.catalogIdentifier,
+        ).toPreset()
+
+        assertEquals("custom:driver-trim", profile.catalogIdentifier)
+        assertEquals(source.sourceName, profile.sourceName)
+        assertEquals(source.sourceUrl, profile.sourceUrl)
+        assertEquals(source.ratedRangeKm, profile.ratedRangeKm)
     }
 
     @Test
@@ -58,5 +107,25 @@ class PersistedSettingsValidationTest {
         assertEquals(MAX_GARAGE_VEHICLES, normalized.size)
         assertEquals("car-a", normalized.first())
         assertEquals(normalized.distinct(), normalized)
+    }
+
+    @Test
+    fun catalogReplacementUpdatesTheEditedGarageSlotWithoutDuplicating() {
+        assertEquals(
+            listOf("car-a", "car-new", "car-c"),
+            replacingGarageVehicleIdentifier(
+                values = listOf("car-a", "car-b", "car-c", "car-new"),
+                original = "car-b",
+                replacement = "car-new",
+            ),
+        )
+        assertEquals(
+            listOf("car-new", "car-a"),
+            replacingGarageVehicleIdentifier(
+                values = listOf("car-a"),
+                original = null,
+                replacement = "car-new",
+            ),
+        )
     }
 }

@@ -33,6 +33,7 @@ class PhotonTest {
         assertEquals("Toronto", places[0].placeName)
         assertEquals(43.65, places[0].latitude, 1e-9)  // [lon,lat] swapped correctly
         assertEquals(-79.38, places[0].longitude, 1e-9)
+        assertEquals("CA", places[0].countryCode)
         assertEquals("123 Main Street", places[1].placeName)
         assertTrue(places[1].fullAddress.contains("Ottawa"))
     }

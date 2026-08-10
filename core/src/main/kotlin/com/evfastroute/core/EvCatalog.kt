@@ -5,9 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 // Selectable EV specifications. Faithful port of the iOS EVPreset / EVCatalog built-in set: the
-// fallback presets plus the Kia manufacturer supplements. (iOS also bundles a 700-car OpenEV JSON
-// and prefers it when present; wiring that asset in is a later add — the built-in set gives the
-// picker real, correct behaviour today.)
+// fallback presets plus the Kia manufacturer supplements. Android loads the same bundled OpenEV
+// JSON as iOS at startup and falls back to this built-in set if validation fails.
 
 /**
  * A selectable vehicle specification. Catalog values are deliberately *starting* values: every
@@ -230,14 +229,13 @@ object EvCatalog {
 }
 
 /** Maps the OpenEV catalog's connector tokens (CCS1/CCS2/NACS Tesla/CHAdeMO) to [ConnectorType]. */
-private fun catalogConnector(raw: String): ConnectorType = when (raw.uppercase()) {
+private fun catalogConnector(raw: String): ConnectorType? = when (raw.uppercase()) {
     "CCS", "CCS1" -> ConnectorType.CCS
     "CCS2" -> ConnectorType.CCS2
     "CHADEMO" -> ConnectorType.CHADEMO
     "NACS", "TESLA", "NACS/TESLA" -> ConnectorType.NACS
     "TYPE2", "TYPE 2" -> ConnectorType.TYPE2
-    "J1772" -> ConnectorType.J1772
-    else -> ConnectorType.OTHER
+    else -> null
 }
 
 @Serializable
@@ -268,7 +266,7 @@ private data class CatalogVehicle(
         batteryCapacityKwh = batteryCapacityKwh,
         maxDcChargingKw = maxDcChargingKw,
         efficiencyKwhPerKm = efficiencyKwhPerKm,
-        connectorTypes = connectorTypes.map { catalogConnector(it) }.ifEmpty { listOf(ConnectorType.OTHER) },
+        connectorTypes = connectorTypes.mapNotNull(::catalogConnector),
         catalogIdentifier = catalogIdentifier ?: EvPreset.defaultIdentifier(make, model, year),
         ratedRangeKm = ratedRangeKm,
         rangeStandard = rangeStandard,
