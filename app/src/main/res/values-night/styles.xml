@@ -2,8 +2,12 @@
 <resources>
     <style name="Theme.EVFastRoute" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@color/evfr_background_top</item>
+        <item name="android:colorAccent">@color/evfr_mint</item>
+        <item name="android:textColorPrimary">@color/evfr_text_primary</item>
+        <item name="android:textColorSecondary">@color/evfr_text_secondary</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">@color/evfr_green_dark</item>
+        <item name="android:navigationBarColor">@color/evfr_background_bottom</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>

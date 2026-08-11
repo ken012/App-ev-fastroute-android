@@ -19,10 +19,16 @@ internal val EvBackgroundTop = Color(0xFF050A14)
 // (0.02, 0.10, 0.13) and (0.00, 0.02, 0.04), respectively.
 internal val EvBackgroundMiddle = Color(0xFF051A21)
 internal val EvBackgroundBottom = Color(0xFF00050A)
-internal val EvGlass = Color(0xFF1C2225)
-internal val EvGlassStrong = Color(0xFF23292C)
-internal val EvMuted = Color(0xFF9AA2AA)
-internal val EvDivider = Color(0x337D9296)
+// Android does not have SwiftUI's ultraThinMaterial, so these blue-black surfaces are blended
+// over the shared gradient. Keeping them translucent preserves the same visual depth instead of
+// turning every card and the tab bar into an opaque grey slab.
+internal val EvSurface = Color(0xFF0B151C)
+internal val EvSurfaceRaised = Color(0xFF13222B)
+internal val EvGlass = Color(0xFF10202A)
+internal val EvChrome = Color(0xFF071119)
+internal val EvTextPrimary = Color(0xFFF4F8F9)
+internal val EvMuted = Color(0xFFB2BEC2)
+internal val EvDivider = Color(0x26FFFFFF)
 
 private val DarkColors = darkColorScheme(
     primary = EvMint,
@@ -33,13 +39,27 @@ private val DarkColors = darkColorScheme(
     onSecondary = Color(0xFF001F29),
     secondaryContainer = Color(0xFF123F50),
     onSecondaryContainer = Color(0xFFC5ECFF),
+    tertiary = EvIndigo,
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFF29346F),
+    onTertiaryContainer = Color(0xFFE0E3FF),
     background = EvBackgroundTop,
-    onBackground = Color(0xFFF5F7F8),
-    surface = Color(0xFF101512),
-    onSurface = Color(0xFFF5F7F8),
-    surfaceVariant = EvGlassStrong,
+    onBackground = EvTextPrimary,
+    surface = EvSurface,
+    onSurface = EvTextPrimary,
+    surfaceVariant = EvSurfaceRaised,
     onSurfaceVariant = EvMuted,
     error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF5C1A1E),
+    onErrorContainer = Color(0xFFFFDAD6),
+    outline = Color(0xFF7D9296),
+    outlineVariant = Color(0xFF3C4D52),
+    inverseSurface = EvTextPrimary,
+    inverseOnSurface = Color(0xFF152126),
+    inversePrimary = Color(0xFF006A67),
+    surfaceTint = EvMint,
+    scrim = Color.Black,
 )
 
 private val AppTypography = Typography(

@@ -688,7 +688,7 @@ private fun removeUnusedNewWaypoint(vm: TripViewModel, target: AddressSearchTarg
 @Composable
 private fun AppBottomBar(selected: AppSection, onSelected: (AppSection) -> Unit) {
     NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.98f),
+        containerColor = EvChrome.copy(alpha = 0.96f),
         tonalElevation = 0.dp,
     ) {
         AppSection.entries.forEach { section ->
@@ -1117,7 +1117,11 @@ private fun ScheduledDepartureControl(vm: TripViewModel) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Schedule departure", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Schedule departure",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 Text(
                     if (vm.useScheduledDeparture) "Set the trip's planned arrival clock times"
                     else "Leave now",
@@ -1155,7 +1159,12 @@ private fun ScheduledDepartureControl(vm: TripViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Icon(Icons.Filled.Schedule, contentDescription = null, tint = EvMint)
-                    Text("Leave at", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        "Leave at",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
                     Text(
                         departureDateTimeLabel(vm.scheduledDepartureMillis),
                         style = MaterialTheme.typography.titleSmall,
@@ -1286,13 +1295,21 @@ private fun PlannerVehicleCard(vm: TripViewModel) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Vehicle", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Vehicle",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 TextButton(onClick = vm::showVehiclePicker) {
                     Text("Change", color = EvMint)
                     Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = EvMint)
                 }
             }
-            Text(vehicle.displayName, style = MaterialTheme.typography.titleLarge)
+            Text(
+                vehicle.displayName,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
             VehicleSpecRow(vehicle, vm.batteryHealthPercent)
             TextButton(onClick = vm::showVehicleEditor, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Edit, contentDescription = null)
@@ -1316,7 +1333,13 @@ private fun VehicleSpecRow(vehicle: EvPreset, batteryHealth: Double) {
 private fun SpecCell(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(
+            value,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1399,7 +1422,11 @@ private fun LargeScreenTitle(title: String, action: (@Composable () -> Unit)? = 
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, style = MaterialTheme.typography.headlineLarge)
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
         action?.invoke()
     }
 }
@@ -1413,7 +1440,7 @@ private fun GlassCard(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+        color = EvGlass.copy(alpha = 0.78f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
@@ -2216,7 +2243,7 @@ private fun ChargerMetricTile(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+        color = EvGlass.copy(alpha = 0.78f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)),
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2370,7 +2397,7 @@ private fun GarageScreen(vm: TripViewModel, contentPadding: PaddingValues) {
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth().clickable(onClick = vm::showCustomVehicleEditor),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                color = EvGlass.copy(alpha = 0.70f),
                 shape = RoundedCornerShape(20.dp),
             ) {
                 Row(
@@ -2771,7 +2798,7 @@ private fun ParityVehiclePicker(
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable { onSelect(preset) },
                     shape = RoundedCornerShape(18.dp),
-                    color = if (selected) EvMint.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                    color = if (selected) EvMint.copy(alpha = 0.18f) else EvGlass.copy(alpha = 0.74f),
                     border = BorderStroke(
                         1.dp,
                         if (selected) EvMint.copy(alpha = 0.55f)
@@ -2831,7 +2858,7 @@ private fun GarageVehiclePicker(vm: TripViewModel, onClose: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().clickable { vm.selectPreset(preset) },
                 shape = RoundedCornerShape(18.dp),
                 color = if (selected) EvMint.copy(alpha = 0.18f)
-                else MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                else EvGlass.copy(alpha = 0.74f),
                 border = BorderStroke(
                     1.dp,
                     if (selected) EvMint.copy(alpha = 0.55f)

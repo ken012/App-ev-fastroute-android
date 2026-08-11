@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="evfr_green_dark">#050A14</color>
+    <color name="evfr_background_top">#050A14</color>
+    <color name="evfr_background_bottom">#00050A</color>
+    <color name="evfr_text_primary">#F4F8F9</color>
+    <color name="evfr_text_secondary">#B2BEC2</color>
+    <color name="evfr_mint">#5BE3DC</color>
 </resources>
