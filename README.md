@@ -13,7 +13,7 @@ expected to match. Native place providers can expose different candidates for th
 see `PARITY.md` for that explicit production-backend boundary.
 
 The app-owned Android experience mirrors the iOS product shell: branded onboarding, the dark glass
-visual system, full-screen place search, and Plan, Route, Garage, and Settings tabs. Platform-owned
+visual system, full-screen place search with on-device recent locations, and Plan, Route, Garage, and Settings tabs. Platform-owned
 permission dialogs, the MapLibre renderer, and external navigation apps remain native to Android.
 The app-owned flow includes absolute scheduled departure, editable re-planning after results,
 catalog or manual vehicles with an editable model year, tappable charging-station details, and a

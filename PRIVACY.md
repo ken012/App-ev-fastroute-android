@@ -1,6 +1,6 @@
 # EV FastRoute Privacy Policy
 
-Effective date: August 9, 2026
+Effective date: August 11, 2026
 
 EV FastRoute helps drivers plan electric-vehicle trips. This policy describes the Android app in
 this repository. The app does not require an EV FastRoute account, does not contain advertising,
@@ -33,8 +33,9 @@ you explicitly save contains the coordinates you selected.
 
 ## Data stored on your device
 
-The app stores preferences, selected vehicle specifications, saved trips, and an active guided-trip
-session in app-private storage. A guided session expires after 24 hours. Android cloud backup is
+The app stores preferences, selected vehicle specifications, up to ten recent place selections,
+saved trips, and an active guided-trip session in app-private storage. Recent places can contain
+the name, address, and coordinates the user selected. A guided session expires after 24 hours. Android cloud backup is
 disabled for the app because these records may contain precise trip coordinates. You can remove
 saved trips in the app or erase all local data by uninstalling the app or clearing its storage in
 Android Settings.

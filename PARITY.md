@@ -32,7 +32,7 @@ charging-stop sequence, SOC targets, ETA math, and route objectives.
 | Charger compatibility/power/status/cost/confidence | strict OCM mapping + filters | JVM tests |
 | Safe NACS→CCS1 adapter handling | explicit per-vehicle confirmation; unconfirmed legacy profiles fail closed | JVM/persistence tests |
 | Region/destination charging map | dual OCM fetch, Level-2/J1772, status markers, station details, retry/partial success | JVM tests; device map smoke pending |
-| Search relevance/proximity/typos/dedup/broadening | `PlaceRanker` | JVM tests |
+| Search relevance/proximity/typos/dedup/broadening plus ten on-device recent places | `PlaceRanker` + `SettingsStore` | JVM/persistence tests |
 | Route geometry/corridor segmentation | strict ORS parsing + route covering boxes | JVM tests |
 | Google/Waze/default deep links | UTF-8-safe coordinate-first URLs | JVM tests |
 | Guided navigation progress | maneuvers, follow/manual/overview camera, full EV reroute, expiring `NavigationSession`, foreground arrival prompt | JVM tests; emulator/device smoke pending on this commit |
@@ -42,7 +42,7 @@ charging-stop sequence, SOC targets, ETA math, and route objectives.
 
 - iOS-matched dark glass visual system, first-run onboarding, and four primary tabs: Plan, Route,
   Garage, and Settings. Native permission dialogs and the platform map renderer remain Android-native.
-- Full-screen start/destination/stop search, current location, ordered user waypoints, swap,
+- Full-screen start/destination/stop search, current location, persistent recent places, ordered user waypoints, swap,
   reorder, and remove.
 - Persistent multi-vehicle Garage, searchable vehicle picker, manual/custom profiles, and editable
   identity/battery/consumption/DC power/connectors/battery health/default arrival reserve.

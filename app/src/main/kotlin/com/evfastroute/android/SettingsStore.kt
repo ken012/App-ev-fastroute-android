@@ -7,6 +7,8 @@ import com.evfastroute.core.EvCatalog
 import com.evfastroute.core.EvPreset
 import com.evfastroute.core.NavigationApp
 import com.evfastroute.core.NavigationSession
+import com.evfastroute.core.PlaceCandidate
+import com.evfastroute.core.PlaceRanker
 import com.evfastroute.core.RangeDrivingStyle
 import com.evfastroute.core.Region
 import java.util.Calendar
@@ -203,6 +205,28 @@ data class SavedPlace(
             (countryCode == null || countryCode.matches(Regex("[A-Za-z]{2}")))
 }
 
+internal const val MAX_RECENT_PLACES = 10
+
+private fun SavedPlace.representsSamePlace(other: SavedPlace): Boolean =
+    PlaceRanker.representsSamePlace(
+        PlaceCandidate(name, address, latitude, longitude, countryCode = countryCode),
+        PlaceCandidate(other.name, other.address, other.latitude, other.longitude, countryCode = other.countryCode),
+    )
+
+/** Keeps newest-first history valid, bounded, and de-duplicated using the iOS same-place rule. */
+internal fun normalizeRecentPlaces(values: List<SavedPlace>): List<SavedPlace> {
+    val normalized = mutableListOf<SavedPlace>()
+    values.forEach { place ->
+        if (place.isValid() && normalized.none { it.representsSamePlace(place) }) {
+            normalized += place
+        }
+    }
+    return normalized.take(MAX_RECENT_PLACES)
+}
+
+internal fun addingRecentPlace(values: List<SavedPlace>, place: SavedPlace): List<SavedPlace> =
+    if (place.isValid()) normalizeRecentPlaces(listOf(place) + values) else normalizeRecentPlaces(values)
+
 @Serializable
 data class SavedTripSnapshot(
     val id: String,
@@ -241,6 +265,9 @@ private fun Set<String>.isValidNetworkSet(): Boolean =
 
 @Serializable
 private data class SavedTripDocument(val values: List<SavedTripSnapshot> = emptyList())
+
+@Serializable
+private data class RecentPlaceDocument(val values: List<SavedPlace> = emptyList())
 
 /** On-device preferences. Precise trip routes are intentionally not backed up (manifest policy). */
 class SettingsStore(context: Context) {
@@ -375,6 +402,26 @@ class SettingsStore(context: Context) {
             }
         }
 
+    var recentPlaces: List<SavedPlace>
+        get() = prefs.getString(KEY_RECENT_PLACES, null)?.let { encoded ->
+            runCatching {
+                json.decodeFromString(RecentPlaceDocument.serializer(), encoded).values
+                    .let(::normalizeRecentPlaces)
+            }.getOrNull()
+        } ?: emptyList()
+        set(value) {
+            val normalized = normalizeRecentPlaces(value)
+            prefs.edit {
+                putString(
+                    KEY_RECENT_PLACES,
+                    json.encodeToString(
+                        RecentPlaceDocument.serializer(),
+                        RecentPlaceDocument(normalized),
+                    ),
+                )
+            }
+        }
+
     var navigationSession: NavigationSession?
         get() = prefs.getString(KEY_SESSION, null)?.let {
             runCatching { json.decodeFromString(NavigationSession.serializer(), it) }.getOrNull()
@@ -428,6 +475,7 @@ class SettingsStore(context: Context) {
         const val KEY_PREFERRED_NETWORKS = "evfr_preferred_networks"
         const val KEY_AVOIDED_NETWORKS = "evfr_avoided_networks"
         const val KEY_SAVED_TRIPS = "evfr_saved_trips"
+        const val KEY_RECENT_PLACES = "evfr_recent_places"
         const val MAX_SAVED_TRIPS = 25
     }
 }

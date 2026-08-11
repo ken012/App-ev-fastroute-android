@@ -7,6 +7,29 @@ import kotlin.test.assertTrue
 
 /** Ports the iOS SearchRankingTests so search relevance behaves identically across platforms. */
 class PlaceRankerTest {
+    @Test
+    fun samePlaceComparisonMatchesIosRecentSearchRules() {
+        val original = PlaceCandidate("Café Central", "1 Main Street", 45.0, -75.0)
+        assertTrue(
+            PlaceRanker.representsSamePlace(
+                original,
+                original.copy(placeName = "Cafe Central", latitude = 45.0001, longitude = -75.0001),
+            ),
+        )
+        assertTrue(
+            PlaceRanker.representsSamePlace(
+                original,
+                original.copy(latitude = 46.0, longitude = -76.0),
+            ),
+        )
+        assertFalse(
+            PlaceRanker.representsSamePlace(
+                original,
+                original.copy(placeName = "Different business"),
+            ),
+        )
+    }
+
 
     private fun place(
         name: String, address: String, km: Double?, lat: Double = 45.0, lon: Double = -74.0,

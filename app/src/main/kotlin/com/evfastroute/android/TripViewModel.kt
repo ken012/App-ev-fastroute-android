@@ -185,6 +185,8 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var destinationSuggestions by mutableStateOf<List<PlaceCandidate>>(emptyList())
         private set
+    var recentLocations by mutableStateOf(settings.recentPlaces.map { it.toCandidate() })
+        private set
     var searchMessage: String? by mutableStateOf(null)
         private set
     var currentLocation by mutableStateOf<LatLon?>(null)
@@ -288,6 +290,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         startText = text
         start = null
         startSearchJob?.cancel()
+        startSuggestions = emptyList()
         searchMessage = null
         if (text.isBlank()) {
             startSuggestions = emptyList()
@@ -317,6 +320,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         destinationText = text
         destination = null
         destinationSearchJob?.cancel()
+        destinationSuggestions = emptyList()
         searchMessage = null
         if (text.isBlank()) {
             destinationSuggestions = emptyList()
@@ -339,7 +343,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         destinationSearchJob = viewModelScope.launch { destinationSuggestions = search(query) }
     }
 
-    fun selectStart(candidate: PlaceCandidate) {
+    fun selectStart(candidate: PlaceCandidate, addToRecents: Boolean = true) {
         startSearchJob?.cancel()
         startSearchJob = null
         invalidatePlan()
@@ -347,6 +351,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         startText = candidate.placeName
         startSuggestions = emptyList()
         searchMessage = null
+        if (addToRecents) addRecentLocation(candidate)
     }
 
     fun selectDestination(candidate: PlaceCandidate) {
@@ -357,6 +362,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         destinationText = candidate.placeName
         destinationSuggestions = emptyList()
         searchMessage = null
+        addRecentLocation(candidate)
     }
 
     fun useCurrentLocation(latitude: Double, longitude: Double, accuracyMeters: Double? = null) {
@@ -372,6 +378,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
                 longitude = longitude,
                 distanceKm = 0.0,
             ),
+            addToRecents = false,
         )
     }
 
@@ -448,6 +455,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         field.text = text
         field.selected = null
         field.searchJob?.cancel()
+        field.suggestions = emptyList()
         searchMessage = null
         if (text.isBlank()) {
             field.suggestions = emptyList()
@@ -467,6 +475,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         field.text = candidate.placeName
         field.suggestions = emptyList()
         searchMessage = null
+        addRecentLocation(candidate)
     }
 
     fun refreshWaypointSuggestions(field: WaypointField) {
@@ -726,6 +735,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         waypoints.clear()
         startSuggestions = emptyList()
         destinationSuggestions = emptyList()
+        recentLocations = emptyList()
         searchMessage = null
         savedTrips = emptyList()
         savedTripMessage = "Settings and saved data were reset."
@@ -1366,6 +1376,12 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
                 item.longitude,
             ) / 1_000.0,
         )
+    }
+
+    private fun addRecentLocation(candidate: PlaceCandidate) {
+        val updated = addingRecentPlace(recentLocations.map { it.toSavedPlace() }, candidate.toSavedPlace())
+        recentLocations = updated.map { it.toCandidate() }
+        settings.recentPlaces = updated
     }
 
     private fun parseNetworks(text: String): Set<String> = text

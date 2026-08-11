@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ElectricCar
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
@@ -1558,11 +1559,6 @@ private fun AddressSearchScreen(
     onUseCurrentLocation: () -> Unit,
 ) {
     val waypoint = target.waypointId?.let { id -> vm.waypoints.firstOrNull { it.id == id } }
-    val query = when (target.kind) {
-        SearchKind.START -> vm.startText
-        SearchKind.DESTINATION -> vm.destinationText
-        SearchKind.WAYPOINT -> waypoint?.text.orEmpty()
-    }
     val suggestions = when (target.kind) {
         SearchKind.START -> vm.startSuggestions
         SearchKind.DESTINATION -> vm.destinationSuggestions
@@ -1574,7 +1570,9 @@ private fun AddressSearchScreen(
         mutableStateOf(vm.currentLocation != null)
     }
     var queryValue by remember(target) {
-        mutableStateOf(TextFieldValue(query, selection = TextRange(0, query.length)))
+        // Match iOS: every search opens on the default actions/recents screen instead of
+        // immediately re-searching the currently selected planner value.
+        mutableStateOf(TextFieldValue("", selection = TextRange(0, 0)))
     }
 
     fun updateQuery(value: String) {
@@ -1597,11 +1595,6 @@ private fun AddressSearchScreen(
 
     LaunchedEffect(target) {
         focusRequester.requestFocus()
-        when (target.kind) {
-            SearchKind.START -> vm.refreshStartSuggestions()
-            SearchKind.DESTINATION -> vm.refreshDestinationSuggestions()
-            SearchKind.WAYPOINT -> waypoint?.let(vm::refreshWaypointSuggestions)
-        }
     }
 
     // Search can open before the optional foreground location fix arrives. Re-run an existing
@@ -1609,7 +1602,7 @@ private fun AddressSearchScreen(
     // driver's position instead of the broad regional fallback. Later GPS ticks deliberately do
     // not trigger more network searches.
     LaunchedEffect(target, vm.currentLocation) {
-        if (!refreshedForFirstLocation && vm.currentLocation != null) {
+        if (!refreshedForFirstLocation && vm.currentLocation != null && queryValue.text.isNotBlank()) {
             refreshedForFirstLocation = true
             when (target.kind) {
                 SearchKind.START -> vm.refreshStartSuggestions()
@@ -1673,7 +1666,7 @@ private fun AddressSearchScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 2.dp),
         ) {
-            if (target.kind == SearchKind.START && query.isBlank()) {
+            if (target.kind == SearchKind.START && queryValue.text.isBlank()) {
                 item {
                     SearchActionRow(
                         icon = Icons.Filled.MyLocation,
@@ -1698,11 +1691,30 @@ private fun AddressSearchScreen(
                 }
             }
 
-            items(suggestions) { candidate ->
-                SearchResultRow(candidate = candidate, usesMiles = vm.usesMiles, onClick = { select(candidate) })
+            if (queryValue.text.isBlank() && vm.recentLocations.isNotEmpty()) {
+                item {
+                    SectionLabel(
+                        "RECENT",
+                        Modifier.padding(top = 22.dp, bottom = 8.dp).testTag("recent_locations_header"),
+                    )
+                }
+                items(vm.recentLocations) { candidate ->
+                    SearchResultRow(
+                        candidate = candidate,
+                        usesMiles = vm.usesMiles,
+                        icon = Icons.Filled.History,
+                        onClick = { select(candidate) },
+                    )
+                }
             }
 
-            if (query.isNotBlank() && suggestions.isEmpty()) {
+            if (queryValue.text.isNotBlank()) {
+                items(suggestions) { candidate ->
+                    SearchResultRow(candidate = candidate, usesMiles = vm.usesMiles, onClick = { select(candidate) })
+                }
+            }
+
+            if (queryValue.text.isNotBlank() && suggestions.isEmpty()) {
                 item {
                     val message = vm.searchMessage
                     Column(
@@ -1753,7 +1765,12 @@ private fun SearchActionRow(icon: ImageVector, title: String, subtitle: String, 
 }
 
 @Composable
-private fun SearchResultRow(candidate: PlaceCandidate, usesMiles: Boolean, onClick: () -> Unit) {
+private fun SearchResultRow(
+    candidate: PlaceCandidate,
+    usesMiles: Boolean,
+    icon: ImageVector = Icons.Filled.LocationOn,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
         verticalAlignment = Alignment.Top,
@@ -1761,7 +1778,7 @@ private fun SearchResultRow(candidate: PlaceCandidate, usesMiles: Boolean, onCli
     ) {
         Surface(shape = CircleShape, color = EvMint.copy(alpha = 0.13f)) {
             Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.LocationOn, contentDescription = null, tint = EvMint)
+                Icon(icon, contentDescription = null, tint = EvMint)
             }
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

@@ -101,6 +101,34 @@ class PersistedSettingsValidationTest {
     }
 
     @Test
+    fun recentPlacesAreNewestFirstDeduplicatedAndBounded() {
+        val sameHomeFromAnotherProvider = place.copy(
+            name = "Hôme",
+            latitude = place.latitude + 0.0001,
+            longitude = place.longitude - 0.0001,
+        )
+        val many = (0..MAX_RECENT_PLACES).map { index ->
+            place.copy(name = "Place $index", latitude = 40.0 + index)
+        }
+
+        val normalized = normalizeRecentPlaces(listOf(place, sameHomeFromAnotherProvider) + many)
+        assertEquals(MAX_RECENT_PLACES, normalized.size)
+        assertEquals("Home", normalized.first().name)
+        assertEquals(1, normalized.count { it.name == "Home" || it.name == "Hôme" })
+
+        val promoted = addingRecentPlace(normalized, normalized.last())
+        assertEquals(normalized.last(), promoted.first())
+        assertEquals(MAX_RECENT_PLACES, promoted.size)
+    }
+
+    @Test
+    fun recentPlacesRejectInvalidPersistedCoordinates() {
+        val invalid = place.copy(latitude = Double.NaN)
+        assertEquals(listOf(place), normalizeRecentPlaces(listOf(invalid, place)))
+        assertEquals(listOf(place), addingRecentPlace(listOf(place), invalid))
+    }
+
+    @Test
     fun garageIdentifiersAreTrimmedDeduplicatedAndBounded() {
         val values = listOf(" car-a ", "car-a", "", "x".repeat(201)) +
             (0..MAX_GARAGE_VEHICLES).map { "car-$it" }

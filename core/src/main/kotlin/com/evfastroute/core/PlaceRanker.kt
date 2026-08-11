@@ -111,6 +111,21 @@ object PlaceRanker {
         return result
     }
 
+    /** Same-place comparison used by persistent search history. Mirrors the iOS recent-search
+     * contract without collapsing separate businesses that happen to share an address. */
+    fun representsSamePlace(lhs: PlaceCandidate, rhs: PlaceCandidate): Boolean {
+        val normalizedName = normalize(lhs.placeName)
+        if (normalizedName != normalize(rhs.placeName)) return false
+        if (
+            kotlin.math.abs(lhs.latitude - rhs.latitude) < 0.00015 &&
+            kotlin.math.abs(lhs.longitude - rhs.longitude) < 0.00015
+        ) {
+            return true
+        }
+        val leftAddress = normalize(lhs.fullAddress)
+        return leftAddress.isNotEmpty() && leftAddress == normalize(rhs.fullAddress)
+    }
+
     /** Case/diacritic/width-insensitive alphanumeric normalization (matches iOS `normalize`). */
     fun normalize(value: String): String {
         val decomposed = Normalizer.normalize(value, Normalizer.Form.NFKD)
