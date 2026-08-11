@@ -69,6 +69,21 @@ enum class Region(val code: String, val displayName: String) {
         ES -> LatLon(40.4637, -3.7492)
     }
 
+    /** City-scale fallback for an interactive charger map, matched to the iOS browse experience. */
+    val defaultMapCenter: LatLon get() = when (this) {
+        US -> LatLon(39.8283, -98.5795)
+        CA -> LatLon(45.4215, -75.6972)
+        GB -> LatLon(51.5074, -0.1278)
+        DE -> LatLon(52.5200, 13.4050)
+        FR -> LatLon(48.8566, 2.3522)
+        NL -> LatLon(52.3676, 4.9041)
+        NO -> LatLon(59.9139, 10.7522)
+        SE -> LatLon(59.3293, 18.0686)
+        CH -> LatLon(46.9480, 7.4474)
+        IT -> LatLon(41.9028, 12.4964)
+        ES -> LatLon(40.4168, -3.7038)
+    }
+
     companion object {
         /** Maps an ISO 3166-1 alpha-2 code to a supported Region, defaulting to US. */
         fun from(isoCountryCode: String?): Region =

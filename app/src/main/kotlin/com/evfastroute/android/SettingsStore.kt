@@ -38,6 +38,10 @@ internal fun replacingGarageVehicleIdentifier(
     return normalizeGarageVehicleIdentifiers(replaced)
 }
 
+/** Whether connector capabilities still match the catalog or were deliberately customized. */
+@Serializable
+enum class ConnectorConfigurationSource { CATALOG, USER }
+
 @Serializable
 data class VehicleOverride(
     val batteryCapacityKwh: Double,
@@ -46,6 +50,9 @@ data class VehicleOverride(
     val connectorNames: List<String>,
     val batteryHealthPercent: Double,
     val defaultArrivalBufferPercent: Int = 15,
+    /** Null keeps profiles saved by older app versions decodable and safely unconfirmed. */
+    val ccs1AdapterAvailable: Boolean? = null,
+    val connectorConfigurationSource: ConnectorConfigurationSource? = null,
 ) {
     internal fun isValid(): Boolean =
         batteryCapacityKwh.isFinite() && batteryCapacityKwh in 15.0..300.0 &&
@@ -66,8 +73,51 @@ data class VehicleOverride(
         }.ifEmpty { base.connectorTypes },
     )
 
+    fun toVehicle(base: EvPreset): com.evfastroute.core.Vehicle {
+        val configured = applyTo(base)
+        return com.evfastroute.core.Vehicle(
+            batteryCapacityKwh = configured.batteryCapacityKwh,
+            efficiencyKwhPerKm = configured.efficiencyKwhPerKm,
+            maxDcChargingKw = configured.maxDcChargingKw,
+            connectorTypes = configured.connectorTypes,
+            batteryHealthPercent = batteryHealthPercent,
+            ccs1AdapterAvailable = ccs1AdapterAvailable,
+        )
+    }
+
+    /** Nil provenance is inferred conservatively for profiles created before this field existed. */
+    fun usesCatalogConnectorDefaults(base: EvPreset, european: Boolean): Boolean {
+        if (connectorConfigurationSource == ConnectorConfigurationSource.USER) return false
+        if (connectorConfigurationSource == ConnectorConfigurationSource.CATALOG) return true
+        return toVehicle(base).routingConnectorTypes.toSet() == base.connectorTypes(european).toSet()
+    }
+
+    fun remappedToCatalog(base: EvPreset, european: Boolean): VehicleOverride = copy(
+        connectorNames = base.connectorTypes(european).map { it.name },
+        ccs1AdapterAvailable = base.defaultCcs1AdapterAvailability(european),
+        connectorConfigurationSource = ConnectorConfigurationSource.CATALOG,
+    )
+
+    /** One-time strict inference for pre-provenance Android profiles. A connector difference is
+     * treated as a user choice, so migration can never overwrite deliberately edited hardware. */
+    fun withInferredConnectorSource(base: EvPreset, european: Boolean): VehicleOverride {
+        if (connectorConfigurationSource != null) return this
+        val catalogNames = base.connectorTypes(european).map { it.name }.toSet()
+        val source = if (connectorNames.toSet() == catalogNames && ccs1AdapterAvailable != true) {
+            ConnectorConfigurationSource.CATALOG
+        } else {
+            ConnectorConfigurationSource.USER
+        }
+        return copy(connectorConfigurationSource = source)
+    }
+
     companion object {
-        fun from(preset: EvPreset, batteryHealthPercent: Double = 100.0): VehicleOverride =
+        fun from(
+            preset: EvPreset,
+            batteryHealthPercent: Double = 100.0,
+            ccs1AdapterAvailable: Boolean? = null,
+            connectorConfigurationSource: ConnectorConfigurationSource? = null,
+        ): VehicleOverride =
             VehicleOverride(
                 batteryCapacityKwh = preset.batteryCapacityKwh,
                 maxDcChargingKw = preset.maxDcChargingKw,
@@ -75,6 +125,8 @@ data class VehicleOverride(
                 connectorNames = preset.connectorTypes.map { it.name },
                 batteryHealthPercent = batteryHealthPercent,
                 defaultArrivalBufferPercent = 15,
+                ccs1AdapterAvailable = ccs1AdapterAvailable,
+                connectorConfigurationSource = connectorConfigurationSource,
             )
     }
 }

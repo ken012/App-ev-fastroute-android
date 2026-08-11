@@ -15,7 +15,7 @@ configured service providers:
   geocoding service supplied by the Android device manufacturer;
 - selected start, destination, intermediate-stop, and charging-station coordinates to
   openrouteservice or the configured routing service;
-- route-area bounding boxes to Open Charge Map to retrieve charging stations;
+- route-area or visible charging-map bounding boxes to Open Charge Map to retrieve stations;
 - map tile requests to OpenFreeMap and its underlying map-data services.
 
 Those providers receive ordinary network information such as your IP address and may process data

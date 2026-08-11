@@ -51,12 +51,25 @@ data class EvPreset(
         return mapped.distinct() // preserve order, drop duplicates
     }
 
+    /** A fresh catalog vehicle never assumes that a CCS1 adapter is present. */
+    fun defaultCcs1AdapterAvailability(european: Boolean): Boolean? {
+        if (european || ConnectorType.NACS !in connectorTypes) return null
+        return if (ConnectorType.CCS !in connectorTypes) false else null
+    }
+
     /** The physics-only [Vehicle] the planner consumes. */
-    fun toVehicle(european: Boolean = false): Vehicle = Vehicle(
+    fun toVehicle(european: Boolean = false): Vehicle = toVehicle(
+        european = european,
+        ccs1AdapterAvailable = defaultCcs1AdapterAvailability(european),
+    )
+
+    /** Builds a vehicle from a persisted adapter decision, including null for legacy profiles. */
+    fun toVehicle(european: Boolean, ccs1AdapterAvailable: Boolean?): Vehicle = Vehicle(
         batteryCapacityKwh = batteryCapacityKwh,
         efficiencyKwhPerKm = efficiencyKwhPerKm,
         maxDcChargingKw = maxDcChargingKw,
         connectorTypes = connectorTypes(european),
+        ccs1AdapterAvailable = ccs1AdapterAvailable,
     )
 
     companion object {
@@ -235,6 +248,7 @@ private fun catalogConnector(raw: String): ConnectorType? = when (raw.uppercase(
     "CHADEMO" -> ConnectorType.CHADEMO
     "NACS", "TESLA", "NACS/TESLA" -> ConnectorType.NACS
     "TYPE2", "TYPE 2" -> ConnectorType.TYPE2
+    "J1772", "TYPE1", "TYPE 1" -> ConnectorType.J1772
     else -> null
 }
 

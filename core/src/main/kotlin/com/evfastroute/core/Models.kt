@@ -7,7 +7,7 @@ package com.evfastroute.core
 // Keep this set identical to iOS `ConnectorType`. These are the connector standards the
 // road-trip planner can verify against Open Charge Map; unsupported/unknown catalog tokens are
 // rejected rather than becoming an Android-only compatibility choice.
-enum class ConnectorType { CCS, CCS2, NACS, CHADEMO, TYPE2 }
+enum class ConnectorType { CCS, CCS2, NACS, CHADEMO, TYPE2, J1772 }
 
 enum class ChargerStatus { AVAILABLE, BUSY, LIMITED, OFFLINE }
 
@@ -62,7 +62,35 @@ data class Vehicle(
     val maxDcChargingKw: Int,
     val connectorTypes: List<ConnectorType>,
     val batteryHealthPercent: Double? = null,
-)
+    /**
+     * Explicit confirmation that this NACS vehicle supports CCS1 and the driver carries the
+     * required adapter. Null means an older profile has not answered the question yet.
+     */
+    val ccs1AdapterAvailable: Boolean? = null,
+) {
+    val offersCcs1AdapterOption: Boolean
+        get() = ConnectorType.NACS in connectorTypes
+
+    /** Older profiles may contain CCS from a previous automatic expansion. Never route through
+     * those stations until the driver explicitly confirms the hardware and adapter. */
+    val requiresCcs1AdapterConfirmation: Boolean
+        get() = offersCcs1AdapterOption &&
+            ConnectorType.CCS in connectorTypes &&
+            ccs1AdapterAvailable == null
+
+    /** Connector capabilities that are safe to use for route planning. */
+    val routingConnectorTypes: List<ConnectorType>
+        get() {
+            if (!offersCcs1AdapterOption) return connectorTypes.distinct()
+            val safe = connectorTypes.toMutableSet()
+            if (ccs1AdapterAvailable == true) {
+                safe += ConnectorType.CCS
+            } else {
+                safe -= ConnectorType.CCS
+            }
+            return ConnectorType.entries.filter { it in safe }
+        }
+}
 
 /** A charger placed on the route: distance travelled along it and how far off-corridor. */
 data class ProjectedCharger(

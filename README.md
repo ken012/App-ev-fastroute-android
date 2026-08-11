@@ -19,6 +19,11 @@ The app-owned flow includes absolute scheduled departure, editable re-planning a
 catalog or manual vehicles with an editable model year, tappable charging-station details, and a
 maneuver map with follow/manual/overview camera and full EV reroute.
 
+The planner also includes a trip-independent charging map and a destination-centered station view.
+They show Level-2/J1772 as well as DC stations and merge two Open Charge Map result sets so dense AC
+coverage cannot hide nearby fast chargers. NACS-to-CCS1 routing is enabled only after the driver
+explicitly confirms compatible vehicle hardware and that the adapter is available.
+
 ## Modules
 
 - `:core` — deterministic routing, energy, range, search ranking, catalog, charger parsing/scoring,

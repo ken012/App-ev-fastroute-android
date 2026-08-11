@@ -158,6 +158,8 @@ private enum class SearchKind { START, DESTINATION, WAYPOINT }
 
 private enum class NetworkPickerKind { PREFERRED, AVOIDED }
 
+private data class ChargerBrowseTarget(val title: String, val center: LatLon)
+
 private val weatherRangeChoices = listOf(
     0f to "Mild",
     8f to "Hot / strong A/C (−8%)",
@@ -573,6 +575,7 @@ private fun AppShell(
 ) {
     var selectedSection by rememberSaveable { mutableStateOf(AppSection.PLAN) }
     var searchTarget by remember { mutableStateOf<AddressSearchTarget?>(null) }
+    var chargerBrowseTarget by remember { mutableStateOf<ChargerBrowseTarget?>(null) }
     var requestedSearchAnchorLocation by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(vm.successfulPlanRevision) {
@@ -609,6 +612,15 @@ private fun AppShell(
                 onUseCurrentLocation()
                 searchTarget = null
             },
+        )
+        return
+    }
+
+    chargerBrowseTarget?.let { target ->
+        ChargerBrowseScreen(
+            title = target.title,
+            initialCenter = target.center,
+            onBack = { chargerBrowseTarget = null },
         )
         return
     }
@@ -658,6 +670,21 @@ private fun AppShell(
                                     createdNewWaypoint = true,
                                 )
                             }
+                        }
+                    },
+                    onOpenChargingMap = {
+                        if (vm.currentLocation == null) onRequestLocation()
+                        val center = vm.currentLocation
+                            ?: vm.start?.let { LatLon(it.latitude, it.longitude) }
+                            ?: vm.region.defaultMapCenter
+                        chargerBrowseTarget = ChargerBrowseTarget("Charging stations", center)
+                    },
+                    onOpenDestinationChargers = {
+                        vm.destination?.let { destination ->
+                            chargerBrowseTarget = ChargerBrowseTarget(
+                                title = "Chargers at destination",
+                                center = LatLon(destination.latitude, destination.longitude),
+                            )
                         }
                     },
                 )
@@ -844,6 +871,8 @@ private fun PlannerScreen(
     onSearchDestination: () -> Unit,
     onSearchWaypoint: (WaypointField) -> Unit,
     onAddWaypoint: () -> Unit,
+    onOpenChargingMap: () -> Unit,
+    onOpenDestinationChargers: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("planner_list"),
@@ -857,6 +886,13 @@ private fun PlannerScreen(
     ) {
         item { LargeScreenTitle("Trip Planner") }
         item { PlannerHeroMap(vm) }
+        item {
+            ChargingBrowseActions(
+                hasDestination = vm.destination != null,
+                onOpenChargingMap = onOpenChargingMap,
+                onOpenDestinationChargers = onOpenDestinationChargers,
+            )
+        }
         item {
             PlannerTripCard(
                 vm = vm,
@@ -918,6 +954,35 @@ private fun PlannerScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ChargingBrowseActions(
+    hasDestination: Boolean,
+    onOpenChargingMap: () -> Unit,
+    onOpenDestinationChargers: () -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedButton(
+            onClick = onOpenChargingMap,
+            modifier = Modifier.weight(1f).testTag("charging_map_button"),
+            shape = RoundedCornerShape(15.dp),
+        ) {
+            Icon(Icons.Filled.Map, contentDescription = null, tint = EvMint)
+            Spacer(Modifier.width(7.dp))
+            Text("Charging map", color = MaterialTheme.colorScheme.onSurface)
+        }
+        OutlinedButton(
+            onClick = onOpenDestinationChargers,
+            enabled = hasDestination,
+            modifier = Modifier.weight(1f).testTag("destination_chargers_button"),
+            shape = RoundedCornerShape(15.dp),
+        ) {
+            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = EvCyan)
+            Spacer(Modifier.width(7.dp))
+            Text("At destination", maxLines = 1)
         }
     }
 }
@@ -1309,7 +1374,13 @@ private fun PlannerVehicleCard(vm: TripViewModel) {
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            VehicleSpecRow(vehicle, vm.batteryHealthPercent)
+            VehicleSpecRow(vehicle, vm.batteryHealthPercent, vm.routingConnectorTypes)
+            if (vm.requiresCcs1AdapterConfirmation) {
+                InlineNotice(
+                    "CCS1 routing is paused. Open Garage and confirm that this vehicle supports CCS1 and that you carry the adapter.",
+                    MaterialTheme.colorScheme.tertiary,
+                )
+            }
             TextButton(onClick = vm::showVehicleEditor, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Edit, contentDescription = null)
                 Spacer(Modifier.width(7.dp))
@@ -1320,11 +1391,19 @@ private fun PlannerVehicleCard(vm: TripViewModel) {
 }
 
 @Composable
-private fun VehicleSpecRow(vehicle: EvPreset, batteryHealth: Double) {
+private fun VehicleSpecRow(
+    vehicle: EvPreset,
+    batteryHealth: Double,
+    routingConnectors: List<ConnectorType>,
+) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         SpecCell("Usable pack", "${trimNumber(vehicle.batteryCapacityKwh * batteryHealth / 100)} kWh", Modifier.weight(1f))
         SpecCell("Max DC", "${vehicle.maxDcChargingKw} kW", Modifier.weight(1f))
-        SpecCell("Plug", vehicle.connectorTypes.firstOrNull()?.displayLabel ?: "—", Modifier.weight(1f))
+        SpecCell(
+            "Plug",
+            routingConnectors.joinToString(", ") { it.displayLabel }.ifEmpty { "—" },
+            Modifier.weight(1f),
+        )
     }
 }
 
@@ -1467,6 +1546,7 @@ private val ConnectorType.displayLabel: String
         ConnectorType.NACS -> "NACS/Tesla"
         ConnectorType.CHADEMO -> "CHAdeMO"
         ConnectorType.TYPE2 -> "Type 2"
+        ConnectorType.J1772 -> "J1772"
     }
 
 @Composable
@@ -2388,6 +2468,8 @@ private fun GarageScreen(vm: TripViewModel, contentPadding: PaddingValues) {
             GarageVehicleCard(
                 vehicle = configured,
                 batteryHealth = vm.batteryHealthFor(preset),
+                routingConnectors = vm.routingConnectorTypesFor(preset),
+                requiresAdapterConfirmation = vm.requiresCcs1AdapterConfirmationFor(preset),
                 selected = preset.catalogIdentifier == vm.selectedPreset.catalogIdentifier,
                 onSelect = { vm.selectPreset(preset) },
                 onEdit = { vm.showVehicleEditor(preset) },
@@ -2417,6 +2499,8 @@ private fun GarageScreen(vm: TripViewModel, contentPadding: PaddingValues) {
 private fun GarageVehicleCard(
     vehicle: EvPreset,
     batteryHealth: Double,
+    routingConnectors: List<ConnectorType>,
+    requiresAdapterConfirmation: Boolean,
     selected: Boolean,
     onSelect: () -> Unit,
     onEdit: () -> Unit,
@@ -2430,7 +2514,14 @@ private fun GarageVehicleCard(
                     if (selected) Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = EvMint)
                 }
                 Text(vehicle.model, style = MaterialTheme.typography.headlineSmall)
-                VehicleSpecRow(vehicle, batteryHealth)
+                VehicleSpecRow(vehicle, batteryHealth, routingConnectors)
+                if (requiresAdapterConfirmation) {
+                    Text(
+                        "Confirm CCS1 adapter to enable CCS routing",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2478,7 +2569,12 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
         mutableIntStateOf(if (isBlankNewVehicle) 15 else vm.defaultArrivalBufferPercent)
     }
     var connectors by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
-        mutableStateOf(if (isBlankNewVehicle) vm.region.defaultConnectors.toSet() else preset.connectorTypes.toSet())
+        // A hand-entered vehicle starts with no assumed hardware. Catalog selection remains the
+        // fastest safe path and fills published connectors without guessing the driver's inlet.
+        mutableStateOf(if (isBlankNewVehicle) emptySet<ConnectorType>() else preset.connectorTypes.toSet())
+    }
+    var ccs1AdapterAvailable by remember(preset, isBlankNewVehicle, vm.editorSeedRevision) {
+        mutableStateOf(if (isBlankNewVehicle) null else vm.ccs1AdapterAvailability)
     }
     var validationMessage by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
@@ -2534,6 +2630,7 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
                 batteryHealthPercent = batteryHealth.toDouble(),
                 defaultArrivalBufferPercent = defaultArrivalBuffer,
                 connectors = connectors,
+                ccs1AdapterAvailable = ccs1AdapterAvailable,
             )
         }
     }
@@ -2672,17 +2769,62 @@ private fun ParityVehicleEditor(vm: TripViewModel) {
         item {
             GlassCard(contentPadding = 0.dp) {
                 Column {
-                    ConnectorType.entries.forEachIndexed { index, connector ->
+                    val showsCcs1Adapter = !vm.region.isEuropean && ConnectorType.NACS in connectors
+                    if (showsCcs1Adapter) {
+                        SettingsToggleRow(
+                            label = "CCS1 supported + adapter available",
+                            checked = ccs1AdapterAvailable == true,
+                            onCheckedChange = { available ->
+                                ccs1AdapterAvailable = available
+                                connectors = if (available) {
+                                    connectors + ConnectorType.CCS
+                                } else {
+                                    connectors - ConnectorType.CCS
+                                }
+                            },
+                        )
+                        HorizontalDivider(color = EvDivider)
+                        if (ccs1AdapterAvailable == null && ConnectorType.CCS in connectors) {
+                            Text(
+                                "CCS routing is paused until you confirm support and that the adapter is in the car.",
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                            HorizontalDivider(color = EvDivider)
+                        }
+                    }
+                    val editableConnectors = ConnectorType.entries.filter {
+                        !showsCcs1Adapter || it != ConnectorType.CCS
+                    }
+                    editableConnectors.forEachIndexed { index, connector ->
                         SettingsToggleRow(
                             label = connector.displayLabel,
                             checked = connector in connectors,
                             onCheckedChange = { checked ->
-                                connectors = if (checked) connectors + connector else connectors - connector
+                                if (checked) {
+                                    if (connector == ConnectorType.NACS && ConnectorType.CCS in connectors) {
+                                        ccs1AdapterAvailable = true
+                                    }
+                                    connectors = connectors + connector
+                                } else {
+                                    connectors = connectors - connector
+                                    if (connector == ConnectorType.NACS) ccs1AdapterAvailable = null
+                                }
                             },
                         )
-                        if (index != ConnectorType.entries.lastIndex) {
+                        if (index != editableConnectors.lastIndex) {
                             HorizontalDivider(color = EvDivider)
                         }
+                    }
+                    if (showsCcs1Adapter) {
+                        HorizontalDivider(color = EvDivider)
+                        Text(
+                            "Only enable CCS1 after confirming your vehicle supports it and you will carry the required adapter.",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

@@ -1,9 +1,12 @@
 package com.evfastroute.android
 
 import com.evfastroute.core.ConnectorType
+import com.evfastroute.core.EvCatalog
 import java.util.Calendar
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -127,5 +130,51 @@ class PersistedSettingsValidationTest {
                 replacement = "car-new",
             ),
         )
+    }
+
+    @Test
+    fun legacyOverrideDecodesWithUnconfirmedAdapterAndUnknownProvenance() {
+        val decoded = Json.decodeFromString(
+            VehicleOverride.serializer(),
+            """{"batteryCapacityKwh":75.0,"maxDcChargingKw":250,"efficiencyKwhPerKm":0.17,"connectorNames":["NACS","CCS"],"batteryHealthPercent":100.0}""",
+        )
+
+        assertNull(decoded.ccs1AdapterAvailable)
+        assertNull(decoded.connectorConfigurationSource)
+        val tesla = EvCatalog.presets.first { it.make == "Tesla" }
+        assertEquals(listOf(ConnectorType.NACS), decoded.toVehicle(tesla).routingConnectorTypes)
+    }
+
+    @Test
+    fun onlyCatalogOwnedConnectorsAreEligibleForRegionRemapping() {
+        val tesla = EvCatalog.presets.first { it.make == "Tesla" }
+        val legacyCatalog = VehicleOverride.from(tesla).copy(
+            connectorNames = listOf("NACS", "CCS"),
+            ccs1AdapterAvailable = null,
+        )
+        assertTrue(legacyCatalog.usesCatalogConnectorDefaults(tesla, european = false))
+
+        val european = legacyCatalog.remappedToCatalog(tesla, european = true)
+        assertEquals(listOf("CCS2"), european.connectorNames)
+        assertEquals(ConnectorConfigurationSource.CATALOG, european.connectorConfigurationSource)
+        assertNull(european.ccs1AdapterAvailable)
+
+        val userOwned = legacyCatalog.copy(connectorConfigurationSource = ConnectorConfigurationSource.USER)
+        assertFalse(userOwned.usesCatalogConnectorDefaults(tesla, european = false))
+    }
+
+    @Test
+    fun provenanceMigrationNeverCallsAnEditedConnectorListCatalogOwned() {
+        val tesla = EvCatalog.presets.first { it.make == "Tesla" }
+        val exact = VehicleOverride.from(tesla).copy(
+            connectorNames = tesla.connectorTypes(european = false).map { it.name },
+        ).withInferredConnectorSource(tesla, european = false)
+        assertEquals(ConnectorConfigurationSource.CATALOG, exact.connectorConfigurationSource)
+
+        val edited = exact.copy(
+            connectorNames = listOf(ConnectorType.NACS.name, ConnectorType.CHADEMO.name),
+            connectorConfigurationSource = null,
+        ).withInferredConnectorSource(tesla, european = false)
+        assertEquals(ConnectorConfigurationSource.USER, edited.connectorConfigurationSource)
     }
 }

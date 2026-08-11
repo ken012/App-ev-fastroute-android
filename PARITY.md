@@ -13,7 +13,7 @@ charging-stop sequence, SOC targets, ETA math, and route objectives.
 | Map | MapKit | MapLibre Native OpenGL ES + OpenFreeMap | Widest-compatible stable backend; on-map attribution remains enabled |
 | Routing | openrouteservice | openrouteservice | Same `driving-car/geojson` request; traffic-independent; proxy/capacity required at scale |
 | Search | MKLocalSearch/CLGeocoder + shared ranker | Android geocoder + Photon + shared ranker | Ranking rules match; provider inventories do not, so typed-query results cannot be guaranteed identical |
-| Chargers | Open Charge Map | Open Charge Map | Same boxes, `minpowerkw=25`, `maxresults=200`; `compact` and `opendata` intentionally omitted |
+| Chargers | Open Charge Map | Open Charge Map | Route planning uses the same `minpowerkw=25`/200-result boxes; browse maps merge all-power and 25+ kW/300-result requests so Level-2 cannot crowd out DC |
 | Storage | UserDefaults | app-private SharedPreferences | Android cloud/device-transfer backup disabled |
 | Product shell | SwiftUI branded shell | Compose branded shell | Same onboarding and Plan/Route/Garage/Settings information architecture |
 | Navigation | Apple/Google/Waze handoff | Google/Waze/default-app handoff | Waze/default are sequential stop-by-stop |
@@ -30,6 +30,8 @@ charging-stop sequence, SOC targets, ETA math, and route objectives.
 | Conservative range | vehicle/battery health/weather/load/style/route speed + uncertainty | JVM tests |
 | 789-car editable vehicle catalog | bundled OpenEV asset + Kia supplement | real-asset tests |
 | Charger compatibility/power/status/cost/confidence | strict OCM mapping + filters | JVM tests |
+| Safe NACS→CCS1 adapter handling | explicit per-vehicle confirmation; unconfirmed legacy profiles fail closed | JVM/persistence tests |
+| Region/destination charging map | dual OCM fetch, Level-2/J1772, status markers, station details, retry/partial success | JVM tests; device map smoke pending |
 | Search relevance/proximity/typos/dedup/broadening | `PlaceRanker` | JVM tests |
 | Route geometry/corridor segmentation | strict ORS parsing + route covering boxes | JVM tests |
 | Google/Waze/default deep links | UTF-8-safe coordinate-first URLs | JVM tests |
@@ -47,6 +49,10 @@ charging-stop sequence, SOC targets, ETA math, and route objectives.
 - Weather loss, passenger/cargo, driving-style range assumptions.
 - Minimum charging speed, preferred/avoided networks, optional low-confidence exclusion.
 - Live charging-station corridor retrieval in bounded overlapping boxes with success-only caches.
+- Trip-independent **Charging map** and destination-centered charger browse, including Level-2,
+  J1772, reported/offline stations, honest unknown-power display, station details, and retry.
+- NACS vehicles never gain CCS1 routing from catalog metadata alone. Garage requires explicit
+  confirmation of vehicle support and adapter availability; older ambiguous profiles fail closed.
 - Route option cards, deduplicated-objective badges, map line/pins, arrival battery/timeline, known
   single-currency cost only, tappable station-detail pages, provider-specific OCM licensing, and
   visible safety disclosure.

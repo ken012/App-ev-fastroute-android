@@ -71,6 +71,12 @@ defer until after launch.
 - [ ] Pan during in-app guidance (follow must pause), then test Recenter, Route overview, manual
       reroute, and a controlled off-route case. Confirm rerouting recalculates chargers and SOC.
 - [ ] Add and relaunch both a catalog vehicle override and a fully manual vehicle profile.
+- [ ] In Canada, test a NACS vehicle with CCS1 adapter set to off, on, and an upgraded legacy
+      profile with no answer. CCS stations must be excluded until explicit confirmation, then FLO,
+      ChargePoint, and Circle K/On the Run CCS stations should become eligible when otherwise valid.
+- [ ] Open **Charging map** and **Chargers at destination**; verify J1772/Level-2 and DC stations,
+      offline/unknown status, unknown power, marker details, pan/zoom refresh, partial-service
+      results, empty state, retry, and OCM attribution against the operator's app.
 - [ ] On iOS and Android release builds using the same ORS/OCM keys, select the same saved
       coordinates and settings and compare road geometry, charging-stop IDs/order, targets, ETA,
       and route-objective cards. Typed search itself may differ until the shared geocoder ships.

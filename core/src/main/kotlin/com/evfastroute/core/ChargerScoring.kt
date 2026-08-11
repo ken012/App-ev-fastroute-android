@@ -18,7 +18,7 @@ object ChargerScoring {
 
     /** Time-objective charger preference (higher is better). Port of iOS speedScore. */
     fun speedScore(charger: Charger, vehicle: Vehicle, preferredNetworks: Set<String>): Double {
-        val compatibleKw = charger.compatiblePower(vehicle.connectorTypes) ?: 0
+        val compatibleKw = charger.compatiblePower(vehicle.routingConnectorTypes) ?: 0
         val effectiveSpeed = minOf(compatibleKw.toDouble(), vehicle.maxDcChargingKw.toDouble())
         val availabilityRatio = charger.availabilityRatio ?: 0.6   // neutral when live availability unknown
         val queueRisk = if (charger.availableStalls == null) 0.0 else maxOf(0.0, (1.0 - availabilityRatio) * 40)

@@ -68,7 +68,7 @@ object RoutePlanner {
             // A charger reached with enough charge to continue is not a real stop — drop the whole
             // candidate rather than emit a phantom zero-charge stop (iOS guards the same way).
             if (targetInt <= arrivalInt) return null
-            val compatibleKw = charger.compatiblePower(vehicle.connectorTypes) ?: return null
+            val compatibleKw = charger.compatiblePower(vehicle.routingConnectorTypes) ?: return null
             val effectiveKw = maxOf(1.0, minOf(compatibleKw.toDouble(), vehicle.maxDcChargingKw.toDouble()))
             val minutes = ChargePlanner.chargeMinutes(arrivalInt, targetInt, capacity, effectiveKw)
 
@@ -220,7 +220,7 @@ object RoutePlanner {
             val arrivalInt = arrival.roundToInt().coerceIn(0, 100)
             val targetInt = maxOf(arrivalInt, minOf(95, ceil(target).toInt()))
             if (targetInt <= arrivalInt) return null
-            val compatibleKw = charger.compatiblePower(vehicle.connectorTypes) ?: return null
+            val compatibleKw = charger.compatiblePower(vehicle.routingConnectorTypes) ?: return null
             val effectiveKw = maxOf(1.0, minOf(compatibleKw.toDouble(), vehicle.maxDcChargingKw.toDouble()))
             val minutes = ChargePlanner.chargeMinutes(arrivalInt, targetInt, capacity, effectiveKw)
 

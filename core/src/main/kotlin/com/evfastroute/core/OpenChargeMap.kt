@@ -3,6 +3,7 @@ package com.evfastroute.core
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.Locale
+import kotlin.math.sqrt
 import kotlin.math.roundToInt
 
 // Open Charge Map response parsing → Charger. Same API + mapping as the iOS OpenChargeMapService,
@@ -16,9 +17,19 @@ import kotlin.math.roundToInt
 private data class OcmConnectionType(val Title: String? = null)
 
 @Serializable
+private data class OcmCurrentType(
+    val ID: Int? = null,
+    val Title: String? = null,
+)
+
+@Serializable
 private data class OcmConnection(
     val ConnectionType: OcmConnectionType? = null,
     val PowerKW: Double? = null,
+    val Voltage: Double? = null,
+    val Amps: Double? = null,
+    val CurrentTypeID: Int? = null,
+    val CurrentType: OcmCurrentType? = null,
     val Quantity: Int? = null,
 )
 
@@ -83,9 +94,9 @@ object OpenChargeMap {
         // Keep connector-specific power rather than flattening to the fastest (maybe incompatible) plug.
         val recognised = (poi.Connections ?: emptyList()).mapNotNull { connection ->
             val type = connectorFromTitle(connection.ConnectionType?.Title) ?: return@mapNotNull null
-            val power = connection.PowerKW ?: return@mapNotNull null
-            if (!power.isFinite() || power <= 0.0) return@mapNotNull null
-            ChargerConnector(type = type, maxKw = power.roundToInt().coerceAtLeast(1))
+            // Zero means the connector is real but OCM did not publish enough electrical data to
+            // establish power. Browse still shows it; minimum-power route filtering fails closed.
+            ChargerConnector(type = type, maxKw = resolvedPowerKw(connection) ?: 0)
         }
         if (recognised.isEmpty()) return null
 
@@ -164,7 +175,22 @@ object OpenChargeMap {
         if (raw.contains("chademo")) return ConnectorType.CHADEMO
         if (raw.contains("tesla") || raw.contains("nacs")) return ConnectorType.NACS
         if (raw.contains("type 2") || raw.contains("type2") || raw.contains("mennekes")) return ConnectorType.TYPE2
+        if (raw.contains("j1772") || raw.contains("type 1") || raw.contains("type1")) return ConnectorType.J1772
         return null
+    }
+
+    private fun resolvedPowerKw(connection: OcmConnection): Int? {
+        connection.PowerKW?.takeIf { it.isFinite() && it > 0.0 }?.let {
+            return it.roundToInt().coerceAtLeast(1)
+        }
+        val voltage = connection.Voltage?.takeIf { it.isFinite() && it > 0.0 } ?: return null
+        val amps = connection.Amps?.takeIf { it.isFinite() && it > 0.0 } ?: return null
+        val currentTypeId = connection.CurrentType?.ID ?: connection.CurrentTypeID
+        val currentTitle = connection.CurrentType?.Title.orEmpty().lowercase()
+        val phaseMultiplier = if (currentTypeId == 20 || "three-phase" in currentTitle) sqrt(3.0) else 1.0
+        val derived = voltage * amps * phaseMultiplier / 1_000.0
+        return derived.takeIf { it.isFinite() && it > 0.0 }
+            ?.roundToInt()?.coerceAtLeast(1)
     }
 
     data class ParsedPrice(val value: Double, val currencyCode: String)

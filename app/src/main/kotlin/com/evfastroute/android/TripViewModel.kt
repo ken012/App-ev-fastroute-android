@@ -129,6 +129,12 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     val configuredPreset: EvPreset
         get() = selectedVehicleOverride?.applyTo(selectedPreset)
             ?: selectedPreset.copy(connectorTypes = selectedPreset.connectorTypes(region.isEuropean))
+    val ccs1AdapterAvailability: Boolean?
+        get() = adapterAvailability(selectedPreset, selectedVehicleOverride)
+    val routingConnectorTypes: List<ConnectorType>
+        get() = baseVehicle.routingConnectorTypes
+    val requiresCcs1AdapterConfirmation: Boolean
+        get() = baseVehicle.requiresCcs1AdapterConfirmation
     val batteryHealthPercent: Double
         get() = selectedVehicleOverride?.batteryHealthPercent ?: 100.0
     val defaultArrivalBufferPercent: Int
@@ -225,6 +231,15 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     private var planGeneration = 0L
 
     init {
+        garageVehicleIdentifiers
+            .filterNot { it.startsWith("custom:") }
+            .forEach { identifier ->
+                val preset = presetForIdentifier(identifier) ?: return@forEach
+                val existing = settings.vehicleOverride(identifier) ?: return@forEach
+                val migrated = existing.withInferredConnectorSource(preset, region.isEuropean)
+                if (migrated != existing) settings.setVehicleOverride(identifier, migrated)
+            }
+        selectedVehicleOverride = settings.vehicleOverride(selectedPreset.catalogIdentifier)
         if (settings.garageVehicleIdentifiers != garageVehicleIdentifiers) {
             settings.garageVehicleIdentifiers = garageVehicleIdentifiers
         }
@@ -234,10 +249,14 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val baseVehicle
-        // `configuredPreset` already contains region-mapped catalog connectors or the driver's
-        // explicit override. Mapping a second time would silently rewrite a user-selected adapter.
-        get() = configuredPreset.toVehicle(european = false)
-            .copy(batteryHealthPercent = batteryHealthPercent)
+        // Overrides already contain region-mapped or explicitly selected connectors. Applying
+        // region mapping a second time would silently rewrite a driver's hardware choice.
+        get() = selectedVehicleOverride?.toVehicle(selectedPreset)
+            ?: selectedPreset.toVehicle(region.isEuropean)
+
+    private fun adapterAvailability(preset: EvPreset, override: VehicleOverride?): Boolean? =
+        if (override != null) override.ccs1AdapterAvailable
+        else preset.defaultCcs1AdapterAvailability(region.isEuropean)
 
     val estimatedRange: RangeEstimator.Estimate
         get() = RangeEstimator.estimate(
@@ -585,8 +604,24 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateRegion(value: Region) {
         if (region == value) return
+        val previousRegion = region
+        // Only catalog-owned connector lists follow a region change. Explicit user hardware
+        // choices remain untouched, and legacy profiles are inferred before being marked.
+        garageVehicleIdentifiers
+            .filterNot { it.startsWith("custom:") }
+            .forEach { identifier ->
+                val preset = presetForIdentifier(identifier) ?: return@forEach
+                val override = settings.vehicleOverride(identifier) ?: return@forEach
+                if (override.usesCatalogConnectorDefaults(preset, previousRegion.isEuropean)) {
+                    settings.setVehicleOverride(
+                        identifier,
+                        override.remappedToCatalog(preset, value.isEuropean),
+                    )
+                }
+            }
         region = value
         settings.region = value
+        selectedVehicleOverride = settings.vehicleOverride(selectedPreset.catalogIdentifier)
         usesMiles = settings.usesMiles
         preferredNetworks = value.defaultNetworks
         avoidedNetworks = emptySet()
@@ -748,6 +783,18 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         settings.vehicleOverride(preset.catalogIdentifier)?.applyTo(preset)
             ?: preset.copy(connectorTypes = preset.connectorTypes(region.isEuropean))
 
+    fun routingConnectorTypesFor(preset: EvPreset): List<ConnectorType> {
+        val override = settings.vehicleOverride(preset.catalogIdentifier)
+        return override?.toVehicle(preset)?.routingConnectorTypes
+            ?: preset.toVehicle(region.isEuropean).routingConnectorTypes
+    }
+
+    fun requiresCcs1AdapterConfirmationFor(preset: EvPreset): Boolean {
+        val override = settings.vehicleOverride(preset.catalogIdentifier)
+        return (override?.toVehicle(preset) ?: preset.toVehicle(region.isEuropean))
+            .requiresCcs1AdapterConfirmation
+    }
+
     fun batteryHealthFor(preset: EvPreset): Double =
         settings.vehicleOverride(preset.catalogIdentifier)?.batteryHealthPercent ?: 100.0
 
@@ -799,10 +846,20 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         batteryHealthPercent: Double,
         defaultArrivalBufferPercent: Int,
         connectors: Set<ConnectorType>,
+        ccs1AdapterAvailable: Boolean?,
     ): String? {
         val normalizedMake = make.trim()
         val normalizedModel = model.trim()
         val efficiency = efficiencyKwhPer100Km / 100.0
+        val normalizedConnectors = connectors.toMutableSet()
+        val savedAdapterAvailability = if (!region.isEuropean && ConnectorType.NACS in normalizedConnectors) {
+            val confirmed = ccs1AdapterAvailable == true
+            if (confirmed) normalizedConnectors += ConnectorType.CCS
+            else normalizedConnectors -= ConnectorType.CCS
+            confirmed
+        } else {
+            null
+        }
         val error = when {
             normalizedMake.isEmpty() -> "Vehicle make is required."
             normalizedModel.isEmpty() -> "Vehicle model is required."
@@ -813,18 +870,10 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             !efficiency.isFinite() || efficiency <= 0.05 || efficiency > 0.50 -> "Consumption must be above 5 and no more than 50 kWh/100 km."
             !batteryHealthPercent.isFinite() || batteryHealthPercent !in 60.0..100.0 -> "Battery health must be between 60% and 100%."
             defaultArrivalBufferPercent !in 5..35 -> "Arrival buffer must be between 5% and 35%."
-            connectors.isEmpty() -> "Select at least one compatible connector."
+            normalizedConnectors.isEmpty() -> "Select at least one compatible connector."
             else -> null
         }
         if (error != null) return error
-        val override = VehicleOverride(
-            batteryCapacityKwh = batteryCapacityKwh,
-            maxDcChargingKw = maxDcChargingKw,
-            efficiencyKwhPerKm = efficiency,
-            connectorNames = connectors.map { it.name }.sorted(),
-            batteryHealthPercent = batteryHealthPercent,
-            defaultArrivalBufferPercent = defaultArrivalBufferPercent,
-        )
         val sourceCatalogIdentifier = when {
             !selectedPreset.catalogIdentifier.startsWith("custom:") -> selectedPreset.catalogIdentifier
             else -> customVehicleRecords.firstOrNull {
@@ -854,6 +903,28 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
             } ?: "custom:${UUID.randomUUID()}"
         }
 
+        val catalogBaseline = presetForIdentifier(identifier)
+            ?.takeUnless { identifier.startsWith("custom:") }
+        val connectorSource = if (
+            catalogBaseline != null &&
+            normalizedConnectors == catalogBaseline.connectorTypes(region.isEuropean).toSet() &&
+            savedAdapterAvailability != true
+        ) {
+            ConnectorConfigurationSource.CATALOG
+        } else {
+            ConnectorConfigurationSource.USER
+        }
+        val override = VehicleOverride(
+            batteryCapacityKwh = batteryCapacityKwh,
+            maxDcChargingKw = maxDcChargingKw,
+            efficiencyKwhPerKm = efficiency,
+            connectorNames = ConnectorType.entries.filter { it in normalizedConnectors }.map { it.name },
+            batteryHealthPercent = batteryHealthPercent,
+            defaultArrivalBufferPercent = defaultArrivalBufferPercent,
+            ccs1AdapterAvailable = savedAdapterAvailability,
+            connectorConfigurationSource = connectorSource,
+        )
+
         var persistedPreset = selectedPreset
         if (identifier.startsWith("custom:")) {
             val record = CustomVehicleRecord(
@@ -864,7 +935,7 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
                 batteryCapacityKwh = batteryCapacityKwh,
                 maxDcChargingKw = maxDcChargingKw,
                 efficiencyKwhPerKm = efficiency,
-                connectorNames = connectors.map { it.name }.sorted(),
+                connectorNames = ConnectorType.entries.filter { it in normalizedConnectors }.map { it.name },
                 sourceCatalogIdentifier = sourceCatalogIdentifier.takeIf { sourceIdentityStillMatches },
             )
             customVehicleRecords = (listOf(record) + customVehicleRecords.filterNot { it.identifier == identifier })

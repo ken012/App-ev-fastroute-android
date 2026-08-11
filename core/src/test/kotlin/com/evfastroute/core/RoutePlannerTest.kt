@@ -70,6 +70,31 @@ class RoutePlannerTest {
     }
 
     @Test
+    fun ccsStopRequiresExplicitAdapterConfirmationForNacsVehicle() {
+        val unconfirmed = vehicle.copy(
+            connectorTypes = listOf(ConnectorType.NACS, ConnectorType.CCS),
+            ccs1AdapterAvailable = null,
+        )
+        val arguments = listOf(charger("CCS"))
+        assertNull(
+            RoutePlanner.buildRoute(
+                id = "safe", sequence = arguments,
+                legDistancesKm = listOf(300.0, 300.0), legDurationMinutes = listOf(180, 180),
+                directMinutes = 360, vehicle = unconfirmed,
+                currentSOC = 80.0, arrivalBufferPercent = 10.0,
+            ),
+        )
+        assertTrue(
+            RoutePlanner.buildRoute(
+                id = "confirmed", sequence = arguments,
+                legDistancesKm = listOf(300.0, 300.0), legDurationMinutes = listOf(180, 180),
+                directMinutes = 360, vehicle = unconfirmed.copy(ccs1AdapterAvailable = true),
+                currentSOC = 80.0, arrivalBufferPercent = 10.0,
+            ) != null,
+        )
+    }
+
+    @Test
     fun optimizeMergesObjectivesThatShareASequence() {
         val candidate = RoutePlanner.buildRoute(
             id = "r1", sequence = listOf(charger("A")),

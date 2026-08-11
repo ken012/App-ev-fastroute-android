@@ -258,7 +258,7 @@ class TripPlanner {
         if (charger.status == ChargerStatus.OFFLINE) return false
         if (preferences.avoidLowConfidenceStations && charger.reliabilityScore < 85.0) return false
         if (ChargerScoring.networkMatches(charger.network, preferences.avoidedNetworks)) return false
-        val compatiblePower = charger.compatiblePower(vehicle.connectorTypes) ?: return false
+        val compatiblePower = charger.compatiblePower(vehicle.routingConnectorTypes) ?: return false
         return compatiblePower >= preferences.minimumChargerSpeedKw
     }
 

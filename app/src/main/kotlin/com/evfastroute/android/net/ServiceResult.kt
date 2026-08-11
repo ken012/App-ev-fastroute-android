@@ -32,5 +32,5 @@ fun ServiceFailure.userMessage(serviceName: String): String = when (kind) {
     ServiceFailureKind.SERVER ->
         "$serviceName is temporarily unavailable. Try again shortly."
     ServiceFailureKind.INVALID_RESPONSE ->
-        "$serviceName returned route data the app could not safely verify. Try again."
+        "$serviceName returned data the app could not safely verify. Try again."
 }

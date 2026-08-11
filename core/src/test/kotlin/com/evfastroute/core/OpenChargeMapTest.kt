@@ -61,6 +61,7 @@ class OpenChargeMapTest {
         assertEquals(ConnectorType.CHADEMO, OpenChargeMap.connectorFromTitle("CHAdeMO"))
         assertEquals(ConnectorType.NACS, OpenChargeMap.connectorFromTitle("Tesla (NACS)"))
         assertEquals(ConnectorType.TYPE2, OpenChargeMap.connectorFromTitle("Type 2 (Mennekes)"))
+        assertEquals(ConnectorType.J1772, OpenChargeMap.connectorFromTitle("Type 1 (J1772)"))
         assertNull(OpenChargeMap.connectorFromTitle("Domestic plug"))
         assertNull(OpenChargeMap.connectorFromTitle(null))
     }
@@ -72,11 +73,38 @@ class OpenChargeMapTest {
     }
 
     @Test
-    fun missingPowerAndInvalidCoordinatesAreRejected() {
+    fun missingPowerIsRetainedForBrowsingButInvalidCoordinatesAreRejected() {
         val missingPower = """[{"ID":1,"AddressInfo":{"Latitude":45.0,"Longitude":-74.0},"Connections":[{"ConnectionType":{"Title":"CCS"}}]}]"""
         val invalidCoordinate = """[{"ID":1,"AddressInfo":{"Latitude":145.0,"Longitude":-74.0},"Connections":[{"ConnectionType":{"Title":"CCS"},"PowerKW":100}]}]"""
-        assertTrue(OpenChargeMap.parse(missingPower).isEmpty())
+        val retained = OpenChargeMap.parse(missingPower).single()
+        assertEquals(0, retained.maxKw)
+        assertEquals(0, retained.connectorDetails.single().maxKw)
+        assertEquals(0, retained.compatiblePower(listOf(ConnectorType.CCS)))
         assertTrue(OpenChargeMap.parse(invalidCoordinate).isEmpty())
+    }
+
+    @Test
+    fun derivesPowerFromVoltageAmpsAndThreePhaseCurrent() {
+        val body = """
+            [
+              {"ID":10,"AddressInfo":{"Latitude":45.0,"Longitude":-74.0},"Connections":[
+                {"ConnectionType":{"Title":"Type 1 (J1772)"},"Voltage":240,"Amps":32}
+              ]},
+              {"ID":11,"AddressInfo":{"Latitude":45.1,"Longitude":-74.1},"Connections":[
+                {"ConnectionType":{"Title":"Type 2"},"Voltage":400,"Amps":32,"CurrentType":{"ID":20,"Title":"AC (Three-Phase)"}}
+              ]}
+            ]
+        """.trimIndent()
+
+        val chargers = OpenChargeMap.parse(body)
+        assertEquals(8, chargers[0].maxKw)
+        assertEquals(22, chargers[1].maxKw)
+    }
+
+    @Test
+    fun publishedPowerTakesPrecedenceOverElectricalDerivation() {
+        val body = """[{"ID":12,"AddressInfo":{"Latitude":45.0,"Longitude":-74.0},"Connections":[{"ConnectionType":{"Title":"CCS"},"PowerKW":50,"Voltage":800,"Amps":500}]}]"""
+        assertEquals(50, OpenChargeMap.parse(body).single().maxKw)
     }
 
     @Test

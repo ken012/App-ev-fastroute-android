@@ -12,7 +12,7 @@ class EvCatalogTest {
     @Test
     fun connectorInventoryMatchesIosRoadTripPlanner() {
         assertEquals(
-            listOf("CCS", "CCS2", "NACS", "CHADEMO", "TYPE2"),
+            listOf("CCS", "CCS2", "NACS", "CHADEMO", "TYPE2", "J1772"),
             ConnectorType.entries.map(ConnectorType::name),
         )
     }
@@ -92,6 +92,34 @@ class EvCatalogTest {
         assertEquals(listOf(ConnectorType.NACS), vehicle.connectorTypes)
         // In Europe the same Tesla is charged as CCS2.
         assertEquals(listOf(ConnectorType.CCS2), tesla.toVehicle(european = true).connectorTypes)
+    }
+
+    @Test
+    fun nacsCcsRoutingFailsClosedUntilAdapterIsConfirmed() {
+        val unconfirmed = Vehicle(
+            batteryCapacityKwh = 75.0,
+            efficiencyKwhPerKm = 0.17,
+            maxDcChargingKw = 250,
+            connectorTypes = listOf(ConnectorType.NACS, ConnectorType.CCS),
+            ccs1AdapterAvailable = null,
+        )
+        assertTrue(unconfirmed.requiresCcs1AdapterConfirmation)
+        assertEquals(listOf(ConnectorType.NACS), unconfirmed.routingConnectorTypes)
+        assertEquals(
+            setOf(ConnectorType.NACS, ConnectorType.CCS),
+            unconfirmed.copy(ccs1AdapterAvailable = true).routingConnectorTypes.toSet(),
+        )
+        assertEquals(
+            listOf(ConnectorType.NACS),
+            unconfirmed.copy(ccs1AdapterAvailable = false).routingConnectorTypes,
+        )
+    }
+
+    @Test
+    fun nonNacsVehicleKeepsItsConnectorsWithoutAdapterState() {
+        val vehicle = Vehicle(75.0, 0.18, 200, listOf(ConnectorType.CCS, ConnectorType.J1772))
+        assertEquals(vehicle.connectorTypes, vehicle.routingConnectorTypes)
+        assertTrue(!vehicle.requiresCcs1AdapterConfirmation)
     }
 
     @Test

@@ -62,6 +62,13 @@ class RegionTest {
     }
 
     @Test
+    fun chargerBrowseFallbacksMatchIosCityCenters() {
+        assertEquals(LatLon(45.4215, -75.6972), Region.CA.defaultMapCenter)
+        assertEquals(LatLon(51.5074, -0.1278), Region.GB.defaultMapCenter)
+        assertEquals(LatLon(52.5200, 13.4050), Region.DE.defaultMapCenter)
+    }
+
+    @Test
     fun distanceFormatsInChosenUnits() {
         assertEquals("100 km", Units.formatDistance(100.0, usesMiles = false))
         assertEquals("62 mi", Units.formatDistance(100.0, usesMiles = true))

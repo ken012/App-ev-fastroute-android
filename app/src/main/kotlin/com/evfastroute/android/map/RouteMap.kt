@@ -38,7 +38,7 @@ import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 
 // OpenFreeMap MapLibre style (free, no API key).
-private const val STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
+internal const val STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
 
 enum class RouteMapCameraMode { OVERVIEW, FOLLOWING, MANUAL }
 
@@ -280,7 +280,7 @@ private fun upsertSource(style: Style, id: String, collection: FeatureCollection
 }
 
 @Composable
-private fun rememberMapViewWithLifecycle(): MapView {
+internal fun rememberMapViewWithLifecycle(): MapView {
     val context = LocalContext.current
     MapLibre.getInstance(context) // must initialize before creating a MapView
     val mapView = remember { MapView(context) }
