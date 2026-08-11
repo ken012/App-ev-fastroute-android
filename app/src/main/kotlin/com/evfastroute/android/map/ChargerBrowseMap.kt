@@ -76,10 +76,10 @@ internal fun ChargerBrowseMap(
                         val bounds = map.projection.visibleRegion.latLngBounds
                         state.onViewportChanged(
                             OcmBounds(
-                                minLat = bounds.latSouth,
-                                minLon = bounds.lonWest,
-                                maxLat = bounds.latNorth,
-                                maxLon = bounds.lonEast,
+                                minLat = bounds.latitudeSouth,
+                                minLon = bounds.longitudeWest,
+                                maxLat = bounds.latitudeNorth,
+                                maxLon = bounds.longitudeEast,
                             ),
                         )
                     }
