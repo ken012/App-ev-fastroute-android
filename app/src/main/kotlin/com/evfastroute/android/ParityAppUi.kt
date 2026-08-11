@@ -573,15 +573,11 @@ private fun AppShell(
 ) {
     var selectedSection by rememberSaveable { mutableStateOf(AppSection.PLAN) }
     var searchTarget by remember { mutableStateOf<AddressSearchTarget?>(null) }
-    var observedPlanning by remember { mutableStateOf(false) }
     var requestedSearchAnchorLocation by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(vm.isPlanning) {
-        if (vm.isPlanning) {
-            observedPlanning = true
-        } else if (observedPlanning) {
-            if (vm.options.isNotEmpty()) selectedSection = AppSection.ROUTE
-            observedPlanning = false
+    LaunchedEffect(vm.successfulPlanRevision) {
+        if (shouldOpenRouteResults(vm.successfulPlanRevision, vm.options.size)) {
+            selectedSection = AppSection.ROUTE
         }
     }
 
@@ -898,7 +894,7 @@ private fun PlannerScreen(
             Button(
                 onClick = vm::plan,
                 enabled = !vm.isPlanning,
-                modifier = Modifier.fillMaxWidth().height(58.dp),
+                modifier = Modifier.fillMaxWidth().height(58.dp).testTag("find_route"),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = EvCyan,
@@ -925,6 +921,9 @@ private fun PlannerScreen(
         }
     }
 }
+
+internal fun shouldOpenRouteResults(successfulPlanRevision: Long, optionCount: Int): Boolean =
+    successfulPlanRevision > 0L && optionCount > 0
 
 @Composable
 private fun PlannerHeroMap(vm: TripViewModel) {

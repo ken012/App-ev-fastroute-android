@@ -44,4 +44,21 @@ class TripPlannerParityTest {
 
         assertTrue(itineraryValidationError(listOf(canada, ottawa, canada))!!.contains("destination"))
     }
+
+    @Test
+    fun everySuccessfulReplanProducesANewResultsNavigationSignal() {
+        val firstPlan = nextSuccessfulPlanRevision(0L)
+        val cachedReplan = nextSuccessfulPlanRevision(firstPlan)
+
+        assertEquals(1L, firstPlan)
+        assertEquals(2L, cachedReplan)
+        assertTrue(shouldOpenRouteResults(cachedReplan, optionCount = 1))
+    }
+
+    @Test
+    fun resultsNavigationRequiresASuccessfulNonEmptyPlan() {
+        assertTrue(!shouldOpenRouteResults(successfulPlanRevision = 0L, optionCount = 1))
+        assertTrue(!shouldOpenRouteResults(successfulPlanRevision = 1L, optionCount = 0))
+        assertEquals(1L, nextSuccessfulPlanRevision(Long.MAX_VALUE))
+    }
 }

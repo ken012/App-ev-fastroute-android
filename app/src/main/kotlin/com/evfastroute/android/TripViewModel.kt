@@ -211,6 +211,8 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var lastPlanComputedAtMillis: Long? by mutableStateOf(null)
         private set
+    var successfulPlanRevision by mutableLongStateOf(0L)
+        private set
     var savedTrips by mutableStateOf(settings.savedTrips)
         private set
     var savedTripMessage: String? by mutableStateOf(null)
@@ -1213,6 +1215,10 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
                             }.takeIf { it >= 0 }
                         } ?: 0
                         lastPlanComputedAtMillis = System.currentTimeMillis()
+                        // A cached replan can finish before Compose observes the transient
+                        // isPlanning=true state. Publish a durable completion revision so every
+                        // successful button press can present its fresh results.
+                        successfulPlanRevision = nextSuccessfulPlanRevision(successfulPlanRevision)
                     }
                     is TripPlanner.Result.Error -> errorMessage = result.message
                 }
@@ -1301,6 +1307,9 @@ class TripViewModel(application: Application) : AndroidViewModel(application) {
         const val SEARCH_DEBOUNCE_MILLIS = 300L
     }
 }
+
+internal fun nextSuccessfulPlanRevision(current: Long): Long =
+    if (current == Long.MAX_VALUE) 1L else current + 1L
 
 internal fun itineraryValidationError(itinerary: List<PlaceCandidate>): String? {
     val start = itinerary.firstOrNull()
