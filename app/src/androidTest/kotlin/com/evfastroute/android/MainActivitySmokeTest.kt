@@ -30,6 +30,7 @@ class MainActivitySmokeTest {
         }
 
         compose.onNodeWithText("Trip Planner").assertIsDisplayed()
+        compose.onNodeWithTag("charging_map_button").assertIsDisplayed()
         compose.onNodeWithText("Start").assertIsDisplayed()
         compose.onNodeWithText("Destination").assertIsDisplayed()
         compose.onNodeWithTag("planner_list").performScrollToNode(hasTestTag("schedule_departure_toggle"))

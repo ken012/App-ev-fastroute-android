@@ -17,6 +17,7 @@ workflows:
             :app:testDebugUnitTest \
             :app:lintDebug \
             :app:assembleDebug \
+            :app:assembleDebugAndroidTest \
             :app:bundleRelease \
             --no-daemon \
             --stacktrace \

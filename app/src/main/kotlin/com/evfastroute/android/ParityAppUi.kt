@@ -885,15 +885,35 @@ private fun PlannerScreen(
         ),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        item { LargeScreenTitle("Trip Planner") }
-        item { PlannerHeroMap(vm) }
         item {
-            ChargingBrowseActions(
-                hasDestination = vm.destination != null,
-                onOpenChargingMap = onOpenChargingMap,
-                onOpenDestinationChargers = onOpenDestinationChargers,
-            )
+            LargeScreenTitle("Trip Planner") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (vm.destination != null) {
+                        IconButton(
+                            onClick = onOpenDestinationChargers,
+                            modifier = Modifier.testTag("destination_chargers_button"),
+                        ) {
+                            Icon(
+                                Icons.Filled.LocationOn,
+                                contentDescription = "Chargers at destination",
+                                tint = EvMint,
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onOpenChargingMap,
+                        modifier = Modifier.testTag("charging_map_button"),
+                    ) {
+                        Icon(
+                            Icons.Filled.Map,
+                            contentDescription = "Charging map",
+                            tint = EvMint,
+                        )
+                    }
+                }
+            }
         }
+        item { PlannerHeroMap(vm) }
         item {
             PlannerTripCard(
                 vm = vm,
@@ -955,35 +975,6 @@ private fun PlannerScreen(
                     Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ChargingBrowseActions(
-    hasDestination: Boolean,
-    onOpenChargingMap: () -> Unit,
-    onOpenDestinationChargers: () -> Unit,
-) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedButton(
-            onClick = onOpenChargingMap,
-            modifier = Modifier.weight(1f).testTag("charging_map_button"),
-            shape = RoundedCornerShape(15.dp),
-        ) {
-            Icon(Icons.Filled.Map, contentDescription = null, tint = EvMint)
-            Spacer(Modifier.width(7.dp))
-            Text("Charging map", color = MaterialTheme.colorScheme.onSurface)
-        }
-        OutlinedButton(
-            onClick = onOpenDestinationChargers,
-            enabled = hasDestination,
-            modifier = Modifier.weight(1f).testTag("destination_chargers_button"),
-            shape = RoundedCornerShape(15.dp),
-        ) {
-            Icon(Icons.Filled.LocationOn, contentDescription = null, tint = EvCyan)
-            Spacer(Modifier.width(7.dp))
-            Text("At destination", maxLines = 1)
         }
     }
 }

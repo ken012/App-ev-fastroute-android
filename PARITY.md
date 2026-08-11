@@ -6,6 +6,10 @@ charger-sequence search, and final objective selection. Given the same selected 
 vehicle/settings, and provider snapshot, they are expected to return the same road geometry,
 charging-stop sequence, SOC targets, ETA math, and route objectives.
 
+The mandatory delivery process for new user-facing work is documented in
+[`FEATURE_PARITY.md`](FEATURE_PARITY.md). A feature is not complete until both native clients are
+implemented and verified, unless an explicit platform exception is approved and recorded.
+
 ## Current Android stack
 
 | Concern | iOS | Android | Production note |

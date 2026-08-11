@@ -12,6 +12,10 @@ the same provider snapshot, route geometry, charging stops, SOC targets, and obj
 expected to match. Native place providers can expose different candidates for the same typed query;
 see `PARITY.md` for that explicit production-backend boundary.
 
+New product features follow the cross-platform completion contract in
+[`FEATURE_PARITY.md`](FEATURE_PARITY.md): implement and verify the user-facing capability on both
+iOS and Android, or document and obtain approval for a platform-specific exception.
+
 The app-owned Android experience mirrors the iOS product shell: branded onboarding, the dark glass
 visual system, full-screen place search with on-device recent locations, and Plan, Route, Garage, and Settings tabs. Platform-owned
 permission dialogs, the MapLibre renderer, and external navigation apps remain native to Android.
