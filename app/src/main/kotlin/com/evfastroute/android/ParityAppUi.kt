@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,9 +30,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -771,65 +775,85 @@ internal fun EvGradientBackground(content: @Composable () -> Unit) {
 
 @Composable
 private fun OnboardingScreen(onContinue: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(28.dp),
-    ) {
-        Spacer(Modifier.weight(1f))
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(220.dp)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(20.dp)
-                    .background(EvCyan.copy(alpha = 0.18f), CircleShape),
-            )
-            Icon(
-                Icons.Filled.ElectricCar,
-                contentDescription = null,
-                tint = EvCyan,
-                modifier = Modifier.size(100.dp),
-            )
-            Icon(
-                Icons.Filled.Bolt,
-                contentDescription = null,
-                tint = EvMint,
-                modifier = Modifier.size(42.dp).padding(bottom = 12.dp),
-            )
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                "EV FastRoute",
-                style = MaterialTheme.typography.displaySmall.copy(fontSize = 42.sp, lineHeight = 48.sp),
-                textAlign = TextAlign.Center,
-            )
-            Text(
-                "Plan EV trips by total arrival time, including charging.",
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp, lineHeight = 25.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OnboardingFeature(Icons.Filled.Timer, "Optimizes total ETA", "Balances drive time, detours, charge speed, and station confidence.")
-            OnboardingFeature(Icons.Filled.VerifiedUser, "Station-confidence aware", "Uses operational status, power, and site size as planning signals.")
-            OnboardingFeature(Icons.Filled.Public, "International routing", "Supports North America and major European countries.")
-        }
-        Text(
-            "Charging times and station confidence are estimates; free-stall availability may be unavailable and pricing incomplete. Always confirm in the operator's app.",
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
-            textAlign = TextAlign.Center,
-        )
-        Button(
-            onClick = onContinue,
-            modifier = Modifier.fillMaxWidth().height(58.dp),
-            shape = RoundedCornerShape(18.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = EvMint, contentColor = Color(0xFF001F1E)),
+    // Center the content when it fits, but let it scroll when it doesn't. Samsung Galaxy devices
+    // ship with Display Zoom / large font-scale turned up, which made this content taller than the
+    // screen; the previous fixed Column had no scroll and clipped its overflow, so "Get Started"
+    // was pushed off the bottom and could not be tapped. verticalScroll fixes reachability; the
+    // inner Column is floored to the viewport height so the group still centers when there is room.
+    val scrollState = rememberScrollState()
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val minContentHeight = (maxHeight - 48.dp).coerceAtLeast(0.dp) // 48dp = the vertical padding below
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("Get Started", style = MaterialTheme.typography.titleMedium)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = minContentHeight),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                // spacedBy(..., CenterVertically) centers the group when there is room and simply
+                // stacks it (then scrolls) when there isn't. Weighted spacers can't be used here:
+                // verticalScroll measures with unbounded height, so weight would collapse to zero.
+                verticalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterVertically),
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(220.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .blur(20.dp)
+                            .background(EvCyan.copy(alpha = 0.18f), CircleShape),
+                    )
+                    Icon(
+                        Icons.Filled.ElectricCar,
+                        contentDescription = null,
+                        tint = EvCyan,
+                        modifier = Modifier.size(100.dp),
+                    )
+                    Icon(
+                        Icons.Filled.Bolt,
+                        contentDescription = null,
+                        tint = EvMint,
+                        modifier = Modifier.size(42.dp).padding(bottom = 12.dp),
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "EV FastRoute",
+                        style = MaterialTheme.typography.displaySmall.copy(fontSize = 42.sp, lineHeight = 48.sp),
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        "Plan EV trips by total arrival time, including charging.",
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 20.sp, lineHeight = 25.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OnboardingFeature(Icons.Filled.Timer, "Optimizes total ETA", "Balances drive time, detours, charge speed, and station confidence.")
+                    OnboardingFeature(Icons.Filled.VerifiedUser, "Station-confidence aware", "Uses operational status, power, and site size as planning signals.")
+                    OnboardingFeature(Icons.Filled.Public, "International routing", "Supports North America and major European countries.")
+                }
+                Text(
+                    "Charging times and station confidence are estimates; free-stall availability may be unavailable and pricing incomplete. Always confirm in the operator's app.",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
+                    textAlign = TextAlign.Center,
+                )
+                Button(
+                    onClick = onContinue,
+                    modifier = Modifier.fillMaxWidth().height(58.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = EvMint, contentColor = Color(0xFF001F1E)),
+                ) {
+                    Text("Get Started", style = MaterialTheme.typography.titleMedium)
+                }
+            }
         }
-        Spacer(Modifier.weight(1f))
     }
 }
 
